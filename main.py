@@ -16,12 +16,9 @@ def clean_acentuacao(text):
     return text
 
 def load_excel(file_path):
-    """Carrega todas as planilhas de um arquivo Excel"""
     if isinstance(file_path, str):
-        # Se for um caminho de arquivo
         excel_file = pd.ExcelFile(file_path)
     else:
-        # Se for um objeto de arquivo (como no Streamlit)
         excel_file = pd.ExcelFile(file_path)
         
     worksheet_names = excel_file.sheet_names  
@@ -81,7 +78,6 @@ def extract_unique_cpfs(dataframes):
     return unique_cpfs
 
 def process_dataframe(df, is_sv2=False):
-    """Processa os valores financeiros em um dataframe"""
     processed_df = df.copy()
     
     def convert_to_float(value):
@@ -116,7 +112,6 @@ def process_dataframe(df, is_sv2=False):
     return processed_df
 
 def process_full(dataframes, ednaldo=False):
-    """Processa todos os dataframes de benefícios"""    
     if ednaldo:
         unimed = dataframes.get('UNIMED')
         va = dataframes.get('VA')
@@ -141,7 +136,6 @@ def process_full(dataframes, ednaldo=False):
         return unimed, va, clin, sv
 
 def load_recorrentes(recorrentes_file, mes_analise):
-    """Carrega dados de recorrentes do mês especificado"""
     recorrente = pd.read_excel(recorrentes_file, dtype=str)
     recorrente['CPF'] = recorrente['CPF'].fillna('').str.replace('.', '').str.replace('-', '').str.zfill(11)
             
@@ -156,7 +150,6 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
             print("ERRO: CPFTITULAR não existe no consolidated_df")
             print("Colunas disponíveis:", consolidated_df.columns.tolist())
 
-        # Assegurar que todos os CPFs estão limpos e padronizados
         if unimed is not None and 'CPFTITULAR' in unimed.columns:
             unimed['CPFBENEFICIARIO'] = unimed['CPFBENEFICIARIO'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
         if va is not None and 'CPFTITULAR' in va.columns:
@@ -168,7 +161,6 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
         if sv2 is not None and 'CPFTITULAR' in sv2.columns:
             sv2['CPFTITULAR'] = sv2['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
 
-        # Preparar DataFrames para merge
         unimed_merge = pd.DataFrame()
         va_merge = pd.DataFrame()
         clin_merge = pd.DataFrame()
@@ -190,7 +182,6 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
         if sv2 is not None and 'CPFTITULAR' in sv2.columns and 'SINTRACAP' in sv2.columns:
             sv2_merge = sv2[['CPFTITULAR', 'SINTRACAP', 'FILIAL']]
 
-        # Realizar os merges usando a chave CPFTITULAR
         result_df = consolidated_df.copy()
 
         if not unimed_merge.empty:
@@ -204,10 +195,7 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
         if not sv2_merge.empty:
             result_df = result_df.merge(sv2_merge, on='CPFTITULAR', how='left')
 
-
-        # Lógica para priorizar sv2[SINTRACAP] e fallback para sv[VALOR]
         result_df['SEGURO_VIDA'] = result_df['SINTRACAP']
-        # Onde SINTRACAP for nulo ou zero, use VALOR_sv como fallback
         result_df['realizado_sv'] = result_df.apply(
             lambda row: row['VALOR_sv'] if (pd.isna(row['SINTRACAP']) or row['SINTRACAP'] == 0) and pd.notna(row['VALOR_sv']) else row['SEGURO_VIDA'], 
             axis=1
@@ -216,12 +204,10 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
         result_df.drop(columns=['SINTRACAP', 'SEGURO_VIDA', 'VALOR_sv', 'CPFBENEFICIARIO', 'CPFDOBENEFICIARIO', 'FILIAL'], inplace=True)
 
     else:
-        # Verificar colunas antes de processar
         if consolidated_df is not None and 'CPFTITULAR' not in consolidated_df.columns:
             print("ERRO: CPFTITULAR não existe no consolidated_df")
             print("Colunas disponíveis:", consolidated_df.columns.tolist())
 
-        # Assegurar que todos os CPFs estão limpos e padronizados
         if unimed is not None and 'CPFTITULAR' in unimed.columns:
             unimed['CPFDOBENEFICIARIO'] = unimed['CPFDOBENEFICIARIO'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
         if va is not None and 'CPFTITULAR' in va.columns:
@@ -231,12 +217,10 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
         if sv is not None and 'CPFTITULAR' in sv.columns:
             sv['CPFTITULAR'] = sv['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
 
-      # Preparar DataFrames para merge
         unimed_merge = pd.DataFrame()
         va_merge = pd.DataFrame()
         clin_merge = pd.DataFrame()
         sv_merge = pd.DataFrame()
-
 
         if unimed is not None and 'CPFDOBENEFICIARIO' in unimed.columns and 'FINAL' in unimed.columns:
             unimed_merge = unimed[['CPFDOBENEFICIARIO', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_unimed',
@@ -251,8 +235,6 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
             sv_merge = sv[['CPFTITULAR', 'VALOR', 'FILIAL']].rename(columns={'VALOR': 'realizado_sv',
                                                                                 'FILIAL': 'frealizado_sv'})
 
-
-        # Realizar os merges usando a chave CPFTITULAR
         result_df = consolidated_df.copy()
 
         if not unimed_merge.empty:
@@ -264,26 +246,21 @@ def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=Fa
         if not sv_merge.empty:
             result_df = result_df.merge(sv_merge, on='CPFTITULAR', how='left')
 
-        # Remove duplicate CPFTITULAR entries
         result_df = result_df.drop_duplicates(subset=['CPFTITULAR'], keep='first')
         result_df.drop(columns=['CPFDOBENEFICIARIO_x', 'CPFDOBENEFICIARIO_y'], inplace=True)
         
-        # Reset index after removing duplicates
         result_df.reset_index(drop=True, inplace=True)
     
     return result_df
 
 def merge_benefits(result_df, recorrente):
-    # Select only required columns from recorrente
     benefit_columns = ['CPF', 'VALE ALIMENTACAO', 'ASSISTENCIA MEDICA', 
                        'SEGURO DE VIDA', 'ASSISTENCIA ODONTOLOGICA', 'FILIAL']
     
-    # Only keep columns that exist in recorrente
     columns_to_use = [col for col in benefit_columns if col in recorrente.columns]
     
     recorrente_subset = recorrente[columns_to_use]
     
-    # Perform the merge
     merged_df = result_df.merge(
         recorrente_subset,
         left_on='CPFTITULAR',
@@ -306,7 +283,6 @@ def merge_benefits(result_df, recorrente):
                           'previsto_clin', 'frealizado_cl', 'realizado_clin', 
                           'previsto_sv', 'frealizado_sv', 'realizado_sv']]
     
-    # 1. Convert benefit columns to float
     benefit_columns = ['previsto_va', 'previsto_unimed', 'previsto_clin', 'previsto_sv']
     for col in benefit_columns:
         if col in merged_df.columns:
@@ -314,15 +290,12 @@ def merge_benefits(result_df, recorrente):
                 lambda x: float(str(x).replace(',', '.')) if pd.notna(x) and x != '' else 0.0
             )
     
-    # 2 & 3. Extract numeric part from filial columns and pad with zeros
     filial_columns = ['previsto_filial', 'frealizado_va', 'frealizado_un', 'frealizado_cl', 'frealizado_sv']
     for col in filial_columns:
         if col in merged_df.columns:
-            # Extract the numeric part (everything before space or dash)
             merged_df[col] = merged_df[col].apply(
                 lambda x: str(x).split(' ')[0].split('-')[0].strip() if pd.notna(x) and x != '' else '0'
             )
-            # Pad with zeros to have 2 digits
             merged_df[col] = merged_df[col].apply(
                 lambda x: str(x).zfill(2) if pd.notna(x) else None
             )
@@ -331,30 +304,16 @@ def merge_benefits(result_df, recorrente):
 
 def process_report(beneficios_file, recorrentes_file, ednaldo=False, output_path=None, 
                   mes_analise=None, progress_callback=None):
-    """
-    Função principal para processar os relatórios de benefícios
-    
-    Args:
-        beneficios_file: Caminho ou objeto de arquivo Excel com benefícios
-        recorrentes_file: Caminho ou objeto de arquivo Excel com recorrentes
-        ednaldo: Booleano indicando se deve usar o modo Ednaldo
-        output_path: Caminho para salvar o arquivo de saída (opcional)
-        mes_analise: Mês de análise no formato string ("01", "02", etc.)
-        progress_callback: Função de callback para atualizar progresso (opcional)
-    """
-    # Função para atualizar progresso (se fornecida)
     def update_progress(progress, message=""):
         if progress_callback:
             progress_callback(progress, message)
     
     update_progress(0, "Carregando arquivos...")
     
-    # Carregar e processar os dados
     dataframes = load_excel(beneficios_file)
     
     update_progress(20, "Arquivos carregados com sucesso")
     
-    # Analisar e filtrar colunas relevantes
     columns_to_keep = analyze_dataframes(dataframes)
     for name, columns in columns_to_keep.items():
         if name in dataframes:
@@ -367,15 +326,12 @@ def process_report(beneficios_file, recorrentes_file, ednaldo=False, output_path
     
     update_progress(40, "Colunas relevantes extraídas")
     
-    # Extrair CPFs únicos
     cpfs_unicos = extract_unique_cpfs(dataframes)
     
-    # Carregar recorrentes
     recorrente_df, recorrentes_cpfs = load_recorrentes(recorrentes_file, mes_analise)
     
     update_progress(60, "CPFs extraídos e processados")
     
-    # Processar cada tipo de benefício
     if ednaldo:
         unimed, va, clin, sv, sv2 = process_full(dataframes, ednaldo=ednaldo)
     else:
@@ -386,7 +342,6 @@ def process_report(beneficios_file, recorrentes_file, ednaldo=False, output_path
     
     update_progress(80, "Dados processados, gerando relatório final")
     
-    # Mesclar todos os dataframes com base nos CPFs
     result_df = merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2, ednaldo)
     result_df = merge_benefits(result_df, recorrente_df)
     

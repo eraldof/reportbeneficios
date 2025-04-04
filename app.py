@@ -18,8 +18,9 @@ st.set_page_config(
     layout="centered"
 )
 
+
+
 def main():
-    # Initialize session state for tracking processing completion
     if 'processing_completed_time' not in st.session_state:
         st.session_state.processing_completed_time = None
     
@@ -28,15 +29,16 @@ def main():
         
     if 'result_df' not in st.session_state:
         st.session_state.result_df = None
+        
+    if 'colaboradores_df' not in st.session_state:
+        st.session_state.colaboradores_df = None
 
-    # Clear progress indicators if timer expired
     if st.session_state.processing_completed_time is not None:
         elapsed_time = time.time() - st.session_state.processing_completed_time
         if elapsed_time >= 5:
             st.session_state.processing_completed_time = None
             st.session_state.processing_started = False
-            # Não use st.rerun() aqui, vamos controlar a limpeza de forma explícita
-    
+
     st.title("Processador de Relatórios de Benefícios")
     st.markdown("""
     Esta aplicação processa relatórios de benefícios, consolidando dados de diferentes fontes.
@@ -63,6 +65,14 @@ def main():
                 label_visibility="collapsed",
                 type=["xlsx"],
                 help="Arquivo Excel contendo dados de recorrentes"
+            )
+            
+            st.subheader("Carregar arquivo de colaboradores (opcional)")
+            colaboradores_file = st.file_uploader(
+                label="Carregar arquivo com nomes dos colaboradores",
+                label_visibility="collapsed",
+                type=["xlsx", "csv"],
+                help="Arquivo contendo CPF e NOME dos colaboradores (opcional)"
             )
         
             st.subheader("Opções de Processamento")
@@ -101,30 +111,44 @@ def main():
         
         process_button = st.button("Processar Dados", type="primary", use_container_width=True)
     
-    # Processar quando o botão for clicado e ambos os arquivos estiverem carregados
     result_df = None
     
-    # Create placeholder containers for progress indicators
     progress_container = st.empty()
     status_container = st.empty()
     success_container = st.empty()
     
-    # Check if we need to display results from a previous run
     result_df = st.session_state.result_df
+    
+    if colaboradores_file is not None and st.session_state.colaboradores_df is None:
+        try:
+            if colaboradores_file.name.endswith('.csv'):
+                colaboradores_df = pd.read_csv(colaboradores_file)
+            else:
+                colaboradores_df = pd.read_excel(colaboradores_file)
+            
+            colaboradores_df.columns = [col.upper() for col in colaboradores_df.columns]
+            
+            if 'CPF' in colaboradores_df.columns and 'NOME' in colaboradores_df.columns:
+                colaboradores_df['CPF'] = colaboradores_df['CPF'].astype(str).str.replace('[^0-9]', '', regex=True).str.zfill(11)
+                st.session_state.colaboradores_df = colaboradores_df
+                st.sidebar.success(f"Arquivo de colaboradores carregado com sucesso: {len(colaboradores_df)} registros.")
+            else:
+                required_cols = ['CPF', 'NOME']
+                missing = [col for col in required_cols if col not in colaboradores_df.columns]
+                st.sidebar.error(f"Colunas obrigatórias ausentes no arquivo de colaboradores: {', '.join(missing)}")
+        except Exception as e:
+            st.sidebar.error(f"Erro ao carregar arquivo de colaboradores: {str(e)}")
     
     if process_button:
         if beneficios_file is None or recorrentes_file is None:
             st.error("Por favor, carregue os dois arquivos necessários.")
         else:
             try:
-                # Limpar quaisquer resultados anteriores
                 st.session_state.result_df = None
                 
-                # Set the processing started flag
                 st.session_state.processing_started = True
                 
                 with st.spinner("Processando dados..."):
-                    # Create progress elements within their containers
                     progress_bar = progress_container.progress(0)
                     status_text = status_container.empty()
                     
@@ -134,7 +158,6 @@ def main():
                             if message:
                                 status_text.text(message)
                         except NoSessionContext:
-                            # Ignore attempts to update progress outside of session context
                             pass
                     
                     result_df = process_report(
@@ -144,6 +167,17 @@ def main():
                         mes_analise=month_mapping[selected_month],
                         progress_callback=update_progress
                     )
+                    
+                    if st.session_state.colaboradores_df is not None:
+                        update_progress(95, "Adicionando nomes dos colaboradores...")
+                        result_df = result_df.merge(
+                            st.session_state.colaboradores_df[['CPF', 'NOME']],
+                            left_on='CPFTITULAR',
+                            right_on='CPF',
+                            how='left'
+                        )
+                        if 'CPF' in result_df.columns:
+                            result_df.drop(columns=['CPF'], inplace=True)
                 
                 st.session_state.result_df = result_df
                 
@@ -154,7 +188,6 @@ def main():
                 st.rerun()
                 
             except Exception as e:
-                # Clear progress indicators on error
                 progress_container.empty()
                 status_container.empty()
                 success_container.empty()
@@ -163,39 +196,31 @@ def main():
                 st.error(f"Erro durante o processamento: {str(e)}")
                 st.exception(e) 
     
-    # Limpar os contêineres após expiração do timer ou se não estiver processando
     if (st.session_state.processing_completed_time is not None and 
         time.time() - st.session_state.processing_completed_time >= 5):
         progress_container.empty()
         status_container.empty()
         success_container.empty()
     
-    # Se temos um resultado para mostrar (de uma execução atual ou anterior)
     if result_df is not None:
-        # Continue displaying the tabs regardless of the progress message timeout
         st.header("Resultados")
         
-        # Visualização dos dados em abas
         tab1, tab2 = st.tabs(["Visão Geral", "Análise Detalhada"])
         
         with tab1:
             st.subheader("Resumo dos Benefícios")
             
-            # Calcular totais gerais
             col1, col2 = st.columns(2)
             
-            # Formatar os números para moeda brasileira
             def format_currency(value):
                 return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
             
-            # Converter colunas para valores numéricos
             numeric_columns = ['previsto_va', 'realizado_va', 'previsto_unimed', 'realizado_unimed', 
                                'previsto_clin', 'realizado_clin', 'previsto_sv', 'realizado_sv']
             
             for col in numeric_columns:
                 result_df[col] = pd.to_numeric(result_df[col], errors='coerce').fillna(0)
             
-            # Calcular totais
             totais = {
                 'Vale Alimentação': {
                     'Previsto': result_df['previsto_va'].sum(),
@@ -225,42 +250,34 @@ def main():
                 }
             }
             
-            # Criar DataFrame para exibição de totais
             totais_df = pd.DataFrame(totais).T
             totais_df['% Variação'] = (totais_df['Diferença'] / totais_df['Previsto'] * 100).fillna(0)
             
-            # Formatação estilizada aprimorada
             def highlight_diff(val):
                 if isinstance(val, (int, float)):
-                    # Vermelho para valores positivos (gastos acima do previsto)
-                    # Verde para valores negativos (economia)
                     if val > 0:
                         return 'background-color: rgba(255, 0, 0, 0.1); color: darkred; font-weight: bold'
                     elif val < 0:
                         return 'background-color: rgba(0, 128, 0, 0.1); color: darkgreen; font-weight: bold'
                 return ''
             
-            # Versão da função para valores percentuais
             def highlight_percent(val):
                 if isinstance(val, (int, float)):
-                    # Delimitar faixas de variação
-                    if val > 10:  # Variação alta (mais de 10%)
+                    if val > 10:
                         return 'background-color: rgba(255, 0, 0, 0.2); color: darkred; font-weight: bold'
-                    elif val > 5:  # Variação média (5-10%)
+                    elif val > 5:
                         return 'background-color: rgba(255, 165, 0, 0.2); color: darkorange'
-                    elif val < -10:  # Economia significativa
+                    elif val < -10:
                         return 'background-color: rgba(0, 128, 0, 0.2); color: darkgreen; font-weight: bold'
-                    elif val < -5:  # Economia moderada
+                    elif val < -5:
                         return 'background-color: rgba(144, 238, 144, 0.2); color: green'
                 return ''
             
-            # Aplicar formatação de moeda
             formatted_df = totais_df.copy()
             for col in ['Previsto', 'Realizado', 'Diferença']:
                 formatted_df[col] = formatted_df[col].apply(format_currency)
             formatted_df['% Variação'] = formatted_df['% Variação'].apply(lambda x: f"{x:.2f}%")
             
-            # Criar versão estilizada do DataFrame
             styled_df = totais_df.style\
                 .format({'Previsto': format_currency, 
                          'Realizado': format_currency, 
@@ -269,7 +286,6 @@ def main():
                 .applymap(highlight_diff, subset=['Diferença'])\
                 .applymap(highlight_percent, subset=['% Variação'])
             
-            # Exibir tabela estilizada
             st.write("Resumo por tipo de benefício:")
             st.dataframe(
                 styled_df,
@@ -283,40 +299,32 @@ def main():
         with tab2:
             st.subheader("Análise por Filial")
             
-            # Criar tabs para diferentes visões
             detail_tab1, detail_tab2, detail_tab3 = st.tabs(["Comparativo Orçado vs Realizado", "Transferências Entre Filiais", "Detalhes por Benefício"])
             
             with detail_tab1:
-                # Criar uma tabela de comparação entre previsto e realizado por filial
                 st.write("Comparativo de valores orçados vs realizados por filial:")
                 
-                # Substituir valores vazios ou NaN por "Não Informado"
                 result_df['previsto_filial'] = result_df['previsto_filial'].fillna('Não Informado')
                 
-                # Criar um dataframe para o comparativo
                 comparativo_filiais = []
                 
-                # Para cada filial prevista, calcular o que foi orçado
                 filiais_previstas = result_df['previsto_filial'].unique()
                 
                 for filial in filiais_previstas:
                     filial_df = result_df[result_df['previsto_filial'] == filial]
                     
-                    # Valores previstos para esta filial
                     previsto_va = filial_df['previsto_va'].sum()
                     previsto_unimed = filial_df['previsto_unimed'].sum()
                     previsto_clin = filial_df['previsto_clin'].sum()
                     previsto_sv = filial_df['previsto_sv'].sum()
                     total_previsto = previsto_va + previsto_unimed + previsto_clin + previsto_sv
                     
-                    # Valores realizados para esta filial (independente de onde foi realizado)
                     realizado_va = filial_df['realizado_va'].sum()
                     realizado_unimed = filial_df['realizado_unimed'].sum()
                     realizado_clin = filial_df['realizado_clin'].sum()
                     realizado_sv = filial_df['realizado_sv'].sum()
                     total_realizado = realizado_va + realizado_unimed + realizado_clin + realizado_sv
                     
-                    # Calcular diferença
                     diferenca = total_realizado - total_previsto
                     variacao_pct = (diferenca / total_previsto * 100) if total_previsto != 0 else 0
                     
@@ -328,18 +336,15 @@ def main():
                         'Variação (%)': variacao_pct
                     })
                 
-                # Criar DataFrame de comparativo
                 comparativo_df = pd.DataFrame(comparativo_filiais)
                 comparativo_df = comparativo_df.sort_values(by='Filial')
                 
-                # Criar uma cópia formatada para exibição
                 comparativo_display = comparativo_df.copy()
                 comparativo_display['Previsto'] = comparativo_display['Previsto'].apply(format_currency)
                 comparativo_display['Realizado'] = comparativo_display['Realizado'].apply(format_currency)
                 comparativo_display['Diferença'] = comparativo_display['Diferença'].apply(format_currency)
                 comparativo_display['Variação (%)'] = comparativo_display['Variação (%)'].apply(lambda x: f"{x:.2f}%")
                 
-                # Aplicar estilo ao comparativo de filiais
                 styled_comparativo = comparativo_df.style\
                     .format({'Previsto': format_currency, 
                              'Realizado': format_currency, 
@@ -353,14 +358,12 @@ def main():
             with detail_tab2:
                 st.write("Análise de transferências entre filiais (Orçado vs Realizado):")
                 
-                # Seleção do tipo de benefício para a matriz de transferência
                 beneficio_matriz = st.selectbox(
                     "Selecione o benefício para análise da matriz de transferências:",
                     ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
                     key="matriz_transferencia"
                 )
                 
-                # Mapear o benefício selecionado para as colunas correspondentes
                 beneficio_map = {
                     "Vale Alimentação": ("previsto_va", "frealizado_va", "realizado_va"),
                     "Assistência Médica": ("previsto_unimed", "frealizado_un", "realizado_unimed"),
@@ -370,12 +373,10 @@ def main():
                 
                 previsto_col, frealizado_col, realizado_col = beneficio_map[beneficio_matriz]
                 
-                # Filtrar dados válidos
                 df_valido = result_df.dropna(subset=['previsto_filial', frealizado_col])
                 df_valido['previsto_filial'] = df_valido['previsto_filial'].astype(str)
                 df_valido[frealizado_col] = df_valido[frealizado_col].astype(str)
                 
-                # Criar tabela de transferências (matriz)
                 matriz_pivot = pd.pivot_table(
                     df_valido,
                     values=realizado_col,
@@ -385,19 +386,14 @@ def main():
                     fill_value=0
                 )
                 
-                # Adicionar totais
                 matriz_pivot['Total Orçado'] = matriz_pivot.sum(axis=1)
                 matriz_pivot.loc['Total Realizado'] = matriz_pivot.sum(axis=0)
                 
-                # Formatar valores para moeda
                 matriz_formatted = matriz_pivot.applymap(format_currency)
                 
-                # Aplicar estilo à matriz de transferências (apenas para valores > 0)
                 def highlight_transfers(val):
                     if isinstance(val, (int, float)):
-                        # Valores nulos ou muito pequenos não recebem destaque
-                        if val > 0.01:  # Um valor mínimo para evitar destacar zeros ou valores irrelevantes
-                            # Intensidade do destaque proporcional ao valor
+                        if val > 0.01:
                             if val > 1000:
                                 return 'background-color: rgba(65, 105, 225, 0.3); color: darkblue; font-weight: bold'
                             elif val > 100:
@@ -406,7 +402,6 @@ def main():
                                 return 'background-color: rgba(65, 105, 225, 0.1); color: darkblue'
                     return ''
                 
-                # Estilizar a matriz pivot
                 styled_matriz = matriz_pivot.style\
                     .format(format_currency)\
                     .applymap(highlight_transfers)
@@ -415,34 +410,27 @@ def main():
                 st.write("Linhas: Filial onde foi orçado | Colunas: Filial onde foi realizado")
                 st.dataframe(styled_matriz, use_container_width=True)
                 
-                # Criar gráfico de sankey ou barras para visualizar fluxos (opcional)
                 st.write("Interpretação: 00 são pessoas que não foram orçadas ou não foram realizadas.")
                 
-                # Nova seção para visualizar CPFs transferidos entre filiais
                 st.markdown("---")
                 st.subheader("Detalhamento de CPFs Transferidos")
                 st.write("Visualize os CPFs que foram orçados em uma filial e realizados em outra:")
                 
-                # Seleção independente do tipo de benefício para detalhamento de CPFs
                 beneficio_cpf = st.selectbox(
                     "Selecione o benefício para detalhamento de CPFs transferidos:",
                     ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
                     key="detalhe_cpf"
                 )
                 
-                # Mapear o benefício selecionado para CPFs para as colunas correspondentes
                 previsto_col_cpf, frealizado_col_cpf, realizado_col_cpf = beneficio_map[beneficio_cpf]
                 
-                # Filtrar dados válidos para o benefício selecionado para CPFs
                 df_valido_cpf = result_df.dropna(subset=['previsto_filial', frealizado_col_cpf])
                 df_valido_cpf['previsto_filial'] = df_valido_cpf['previsto_filial'].astype(str)
                 df_valido_cpf[frealizado_col_cpf] = df_valido_cpf[frealizado_col_cpf].astype(str)
                 
-                # Obter listas de filiais únicas para seleção
                 filiais_orcamento = sorted(df_valido_cpf['previsto_filial'].unique())
                 filiais_realizacao = sorted(df_valido_cpf[frealizado_col_cpf].unique())
                 
-                # Criar seletores para filiais de origem e destino
                 col1, col2 = st.columns(2)
                 with col1:
                     filial_origem = st.selectbox(
@@ -459,14 +447,12 @@ def main():
                     )
                 
                 if filial_origem != filial_destino:
-                    # Filtrar os CPFs transferidos entre as filiais selecionadas
                     cpfs_transferidos = df_valido_cpf[
                         (df_valido_cpf['previsto_filial'] == filial_origem) & 
                         (df_valido_cpf[frealizado_col_cpf] == filial_destino)
                     ]
                     
                     if not cpfs_transferidos.empty:
-                        # Selecionar e renomear colunas relevantes
                         if 'cpf' in cpfs_transferidos.columns:
                             cpf_col = 'cpf'
                         elif 'CPFTITULAR' in cpfs_transferidos.columns:
@@ -475,26 +461,31 @@ def main():
                             cpf_col = None
                             
                         if cpf_col:
-                            colunas_display = [cpf_col, previsto_col_cpf, realizado_col_cpf]
-                            colunas_rename = {
-                                cpf_col: 'CPF',
-                                previsto_col_cpf: 'Valor Orçado',
-                                realizado_col_cpf: 'Valor Realizado'
-                            }
+                            if 'NOME' in cpfs_transferidos.columns:
+                                colunas_display = [cpf_col, 'NOME', previsto_col_cpf, realizado_col_cpf]
+                                colunas_rename = {
+                                    cpf_col: 'CPF',
+                                    'NOME': 'Nome Colaborador',
+                                    previsto_col_cpf: 'Valor Orçado',
+                                    realizado_col_cpf: 'Valor Realizado'
+                                }
+                            else:
+                                colunas_display = [cpf_col, previsto_col_cpf, realizado_col_cpf]
+                                colunas_rename = {
+                                    cpf_col: 'CPF',
+                                    previsto_col_cpf: 'Valor Orçado',
+                                    realizado_col_cpf: 'Valor Realizado'
+                                }
                             
-                            # Criar DataFrame para exibição
                             display_df = cpfs_transferidos[colunas_display].copy()
                             display_df = display_df.rename(columns=colunas_rename)
                             
-                            # Formatar valores monetários
                             display_df['Valor Orçado'] = display_df['Valor Orçado'].apply(format_currency)
                             display_df['Valor Realizado'] = display_df['Valor Realizado'].apply(format_currency)
                             
-                            # Exibir tabela (movi para dentro do bloco if)
                             st.write(f"CPFs orçados em **{filial_origem}** e realizados em **{filial_destino}**:")
                             st.dataframe(display_df, use_container_width=True, hide_index=True)
                             
-                            # Mostrar totais
                             total_orcado = cpfs_transferidos[previsto_col_cpf].sum()
                             total_realizado = cpfs_transferidos[realizado_col_cpf].sum()
                             
@@ -515,16 +506,13 @@ def main():
                 
                 benefit_tabs = st.tabs(["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"])
                 
-                # Tab Vale Alimentação
                 with benefit_tabs[0]:
                     if 'frealizado_va' in result_df.columns:
                         st.subheader("Detalhamento - Vale Alimentação")
                         
-                        # Substituir valores vazios ou NaN
                         result_df['frealizado_va'] = result_df['frealizado_va'].fillna('Não Informado')
                         result_df['previsto_filial'] = result_df['previsto_filial'].fillna('Não Informado')
                         
-                        # 1. Valores por filial onde foi realizado
                         col1, col2 = st.columns(2)
                         
                         with col1:
@@ -536,7 +524,6 @@ def main():
                             })
                             va_prev_group = va_prev_group.sort_values(by='Filial')
                             
-                            # Aplicando estilo em vez de apenas formatar
                             styled_va_prev = va_prev_group.style\
                                 .format({'Valor Orçado': format_currency})
                             
@@ -551,21 +538,17 @@ def main():
                             })
                             va_real_group = va_real_group.sort_values(by='Filial')
                             
-                            # Aplicando estilo em vez de apenas formatar
                             styled_va_real = va_real_group.style\
                                 .format({'Valor Realizado': format_currency})
                             
                             st.dataframe(styled_va_real, use_container_width=True, hide_index=True)
                 
-                # Tab Assistência Médica
                 with benefit_tabs[1]:
                     if 'frealizado_un' in result_df.columns:
                         st.subheader("Detalhamento - Assistência Médica")
                         
-                        # Substituir valores vazios ou NaN
                         result_df['frealizado_un'] = result_df['frealizado_un'].fillna('Não Informado')
                         
-                        # 1. Valores por filial onde foi realizado
                         col1, col2 = st.columns(2)
                         
                         with col1:
@@ -590,15 +573,12 @@ def main():
                             un_real_group['Valor Realizado'] = un_real_group['Valor Realizado'].apply(format_currency)
                             st.dataframe(un_real_group, use_container_width=True, hide_index=True)
                 
-                # Tab Assistência Odontológica
                 with benefit_tabs[2]:
                     if 'frealizado_cl' in result_df.columns:
                         st.subheader("Detalhamento - Assistência Odontológica")
                         
-                        # Substituir valores vazios ou NaN
                         result_df['frealizado_cl'] = result_df['frealizado_cl'].fillna('Não Informado')
                         
-                        # 1. Valores por filial onde foi realizado
                         col1, col2 = st.columns(2)
                         
                         with col1:
@@ -623,15 +603,12 @@ def main():
                             cl_real_group['Valor Realizado'] = cl_real_group['Valor Realizado'].apply(format_currency)
                             st.dataframe(cl_real_group, use_container_width=True, hide_index=True)
                 
-                # Tab Seguro de Vida
                 with benefit_tabs[3]:
                     if 'frealizado_sv' in result_df.columns:
                         st.subheader("Detalhamento - Seguro de Vida")
                         
-                        # Substituir valores vazios ou NaN
                         result_df['frealizado_sv'] = result_df['frealizado_sv'].fillna('Não Informado')
                         
-                        # 1. Valores por filial onde foi realizado
                         col1, col2 = st.columns(2)
                         
                         with col1:
@@ -656,7 +633,6 @@ def main():
                             sv_real_group['Valor Realizado'] = sv_real_group['Valor Realizado'].apply(format_currency)
                             st.dataframe(sv_real_group, use_container_width=True, hide_index=True)
         
-        # Prepara para download
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             result_df.to_excel(writer, index=False)
@@ -670,7 +646,6 @@ def main():
                 use_container_width=True
             )
     
-    # If not in processing state and not showing completion, clear the containers
     if not st.session_state.processing_started and st.session_state.processing_completed_time is None:
         progress_container.empty()
         status_container.empty()
