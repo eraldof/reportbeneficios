@@ -229,11 +229,29 @@ def main():
             totais_df = pd.DataFrame(totais).T
             totais_df['% Variação'] = (totais_df['Diferença'] / totais_df['Previsto'] * 100).fillna(0)
             
-            # Formatação estilizada
+            # Formatação estilizada aprimorada
             def highlight_diff(val):
                 if isinstance(val, (int, float)):
-                    color = 'red' if val > 0 else 'green' if val < 0 else 'black'
-                    return f'color: {color}'
+                    # Vermelho para valores positivos (gastos acima do previsto)
+                    # Verde para valores negativos (economia)
+                    if val > 0:
+                        return 'background-color: rgba(255, 0, 0, 0.1); color: darkred; font-weight: bold'
+                    elif val < 0:
+                        return 'background-color: rgba(0, 128, 0, 0.1); color: darkgreen; font-weight: bold'
+                return ''
+            
+            # Versão da função para valores percentuais
+            def highlight_percent(val):
+                if isinstance(val, (int, float)):
+                    # Delimitar faixas de variação
+                    if val > 10:  # Variação alta (mais de 10%)
+                        return 'background-color: rgba(255, 0, 0, 0.2); color: darkred; font-weight: bold'
+                    elif val > 5:  # Variação média (5-10%)
+                        return 'background-color: rgba(255, 165, 0, 0.2); color: darkorange'
+                    elif val < -10:  # Economia significativa
+                        return 'background-color: rgba(0, 128, 0, 0.2); color: darkgreen; font-weight: bold'
+                    elif val < -5:  # Economia moderada
+                        return 'background-color: rgba(144, 238, 144, 0.2); color: green'
                 return ''
             
             # Aplicar formatação de moeda
@@ -242,11 +260,21 @@ def main():
                 formatted_df[col] = formatted_df[col].apply(format_currency)
             formatted_df['% Variação'] = formatted_df['% Variação'].apply(lambda x: f"{x:.2f}%")
             
+            # Criar versão estilizada do DataFrame
+            styled_df = totais_df.style\
+                .format({'Previsto': format_currency, 
+                         'Realizado': format_currency, 
+                         'Diferença': format_currency,
+                         '% Variação': '{:.2f}%'.format})\
+                .applymap(highlight_diff, subset=['Diferença'])\
+                .applymap(highlight_percent, subset=['% Variação'])
+            
             # Exibir tabela estilizada
+            st.write("Resumo por tipo de benefício:")
             st.dataframe(
-                formatted_df,
+                styled_df,
                 use_container_width=True,
-                height=240, hide_index= True
+                height=240
             )
             
             st.subheader("Prévia do relatório")
@@ -311,7 +339,16 @@ def main():
                 comparativo_display['Diferença'] = comparativo_display['Diferença'].apply(format_currency)
                 comparativo_display['Variação (%)'] = comparativo_display['Variação (%)'].apply(lambda x: f"{x:.2f}%")
                 
-                st.dataframe(comparativo_display, use_container_width=True, hide_index=True)
+                # Aplicar estilo ao comparativo de filiais
+                styled_comparativo = comparativo_df.style\
+                    .format({'Previsto': format_currency, 
+                             'Realizado': format_currency, 
+                             'Diferença': format_currency,
+                             'Variação (%)': '{:.2f}%'.format})\
+                    .applymap(highlight_diff, subset=['Diferença'])\
+                    .applymap(highlight_percent, subset=['Variação (%)'])
+                
+                st.dataframe(styled_comparativo, use_container_width=True)
                 
             with detail_tab2:
                 st.write("Análise de transferências entre filiais (Orçado vs Realizado):")
@@ -355,12 +392,31 @@ def main():
                 # Formatar valores para moeda
                 matriz_formatted = matriz_pivot.applymap(format_currency)
                 
+                # Aplicar estilo à matriz de transferências (apenas para valores > 0)
+                def highlight_transfers(val):
+                    if isinstance(val, (int, float)):
+                        # Valores nulos ou muito pequenos não recebem destaque
+                        if val > 0.01:  # Um valor mínimo para evitar destacar zeros ou valores irrelevantes
+                            # Intensidade do destaque proporcional ao valor
+                            if val > 1000:
+                                return 'background-color: rgba(65, 105, 225, 0.3); color: darkblue; font-weight: bold'
+                            elif val > 100:
+                                return 'background-color: rgba(65, 105, 225, 0.2); color: darkblue'
+                            else:
+                                return 'background-color: rgba(65, 105, 225, 0.1); color: darkblue'
+                    return ''
+                
+                # Estilizar a matriz pivot
+                styled_matriz = matriz_pivot.style\
+                    .format(format_currency)\
+                    .applymap(highlight_transfers)
+                
                 st.write(f"Matriz de transferências - {beneficio_matriz}")
                 st.write("Linhas: Filial onde foi orçado | Colunas: Filial onde foi realizado")
-                st.dataframe(matriz_formatted, use_container_width=True)
+                st.dataframe(styled_matriz, use_container_width=True)
                 
                 # Criar gráfico de sankey ou barras para visualizar fluxos (opcional)
-                st.write("Interpretação: Valores nas células mostram quanto foi gasto em cada combinação de filial orçada → filial realizada")
+                st.write("Interpretação: 00 são pessoas que não foram orçadas ou não foram realizadas.")
                 
                 # Nova seção para visualizar CPFs transferidos entre filiais
                 st.markdown("---")
@@ -479,8 +535,12 @@ def main():
                                 'previsto_va': 'Valor Orçado'
                             })
                             va_prev_group = va_prev_group.sort_values(by='Filial')
-                            va_prev_group['Valor Orçado'] = va_prev_group['Valor Orçado'].apply(format_currency)
-                            st.dataframe(va_prev_group, use_container_width=True, hide_index=True)
+                            
+                            # Aplicando estilo em vez de apenas formatar
+                            styled_va_prev = va_prev_group.style\
+                                .format({'Valor Orçado': format_currency})
+                            
+                            st.dataframe(styled_va_prev, use_container_width=True, hide_index=True)
                         
                         with col2:
                             st.write("Por filial onde foi Realizado:")
@@ -490,8 +550,12 @@ def main():
                                 'realizado_va': 'Valor Realizado'
                             })
                             va_real_group = va_real_group.sort_values(by='Filial')
-                            va_real_group['Valor Realizado'] = va_real_group['Valor Realizado'].apply(format_currency)
-                            st.dataframe(va_real_group, use_container_width=True, hide_index=True)
+                            
+                            # Aplicando estilo em vez de apenas formatar
+                            styled_va_real = va_real_group.style\
+                                .format({'Valor Realizado': format_currency})
+                            
+                            st.dataframe(styled_va_real, use_container_width=True, hide_index=True)
                 
                 # Tab Assistência Médica
                 with benefit_tabs[1]:
