@@ -14,7 +14,23 @@ st.set_page_config(
 
 # Utility functions
 def format_currency(value):
-    return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    """
+    Format a value as Brazilian currency (R$).
+    Handles numeric values, strings, None and NaN.
+    """
+    if pd.isna(value) or value is None:
+        return "R$ 0,00"
+    
+    try:
+        # Try to convert to float if it's not already a number
+        if not isinstance(value, (int, float)):
+            value = float(value)
+        
+        # Format with Brazilian currency conventions
+        return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    except (ValueError, TypeError):
+        # If conversion fails, return the original value
+        return str(value)
 
 def highlight_values(val, thresholds, color_schemes):
     """Generic highlighting function for dataframe values"""
@@ -193,8 +209,7 @@ def render_sidebar():
         type=["xlsx"],
         help="Arquivo Excel contendo planilhas com dados de benefícios",
         label_visibility="collapsed",
-        label="Carregar arquivo de beneficios",
-        key="upload_beneficios"  # Adicionada chave única
+        label="Carregar arquivo de beneficios"
     )
 
     st.subheader("Carregar arquivo com o orçamento")
@@ -202,8 +217,7 @@ def render_sidebar():
         label="Carregar arquivo com o orçamento",
         label_visibility="collapsed",
         type=["xlsx"],
-        help="Arquivo Excel contendo dados de recorrentes",
-        key="upload_recorrentes"  # Adicionada chave única
+        help="Arquivo Excel contendo dados de recorrentes"
     )
     
     st.subheader("Carregar arquivo de colaboradores (opcional)")
@@ -211,8 +225,7 @@ def render_sidebar():
         label="Carregar arquivo com nomes dos colaboradores",
         label_visibility="collapsed",
         type=["xlsx", "csv"],
-        help="Arquivo contendo CPF e NOME dos colaboradores (opcional)",
-        key="upload_colaboradores"  # Adicionada chave única
+        help="Arquivo contendo CPF e NOME dos colaboradores (opcional)"
     )
 
     st.subheader("Opções de Processamento")
@@ -237,19 +250,6 @@ def render_sidebar():
                               help="Ativa o processamento com regras específicas do modo Ednaldo")
 
     process_button = st.button("Processar Dados", type="primary", use_container_width=True)
-    
-    # Add a button to clear the session state
-    st.subheader("Manutenção")
-    clear_session = st.button("🧹 Limpar Sessão", use_container_width=True,
-                             help="Limpa todos os dados de sessão e reseta o aplicativo")
-    
-    if clear_session:
-        # Clear all session state variables
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.success("Sessão limpa com sucesso!")
-        time.sleep(1)
-        st.rerun()
     
     return beneficios_file, recorrentes_file, colaboradores_file, selected_month, month_mapping, ednaldo_mode, process_button
 
@@ -758,7 +758,7 @@ def render_summary_tab(result_df):
     # Process data for selected branch
     terminated, new_hires, transferred = categorize_employees_by_branch(result_df, selected_filial)
     
-    # Display results in tabs by benefit type
+    # Display results in expandable sections
     benefit_map = {
         'Vale Alimentação': ('previsto_va', 'realizado_va', 'filial_realizada_va'),
         'Assistência Médica': ('previsto_unimed', 'realizado_unimed', 'filial_realizada_unimed'),
@@ -766,45 +766,39 @@ def render_summary_tab(result_df):
         'Seguro de Vida': ('previsto_sv', 'realizado_sv', 'filial_realizada_sv')
     }
     
-    # Create tabs for each benefit type
-    benefit_tabs = st.tabs(list(benefit_map.keys()))
+    # 1. Terminated Employees
+    st.subheader(f"1. Colaboradores Desligados - Filial {selected_filial}")
+    st.markdown("Colaboradores que foram orçados na filial selecionada mas não realizados (filial realizada = 00)")
     
-    # Process each benefit type in its corresponding tab
+    term_tabs = st.tabs(list(benefit_map.keys()))
     for i, (benefit_name, cols) in enumerate(benefit_map.items()):
-        with benefit_tabs[i]:
+        with term_tabs[i]:
+            prev_col, real_col, _ = cols
+            render_employee_table(terminated[benefit_name], prev_col, real_col)
+    
+    # 2. New Hires
+    st.subheader(f"2. Colaboradores Contratados - Filial {selected_filial}")
+    st.markdown("Colaboradores que não foram orçados (filial orçada = 00) mas foram realizados na filial selecionada")
+    
+    new_tabs = st.tabs(list(benefit_map.keys()))
+    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
+        with new_tabs[i]:
+            prev_col, real_col, _ = cols
+            render_employee_table(new_hires[benefit_name], prev_col, real_col)
+    
+    # 3. Transferred Employees
+    st.subheader(f"3. Colaboradores Transferidos - Filial {selected_filial}")
+    st.markdown("Colaboradores que foram orçados na filial selecionada mas realizados em outra filial")
+    
+    trans_tabs = st.tabs(list(benefit_map.keys()))
+    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
+        with trans_tabs[i]:
             prev_col, real_col, filial_col = cols
-            
-            # 1. Terminated Employees
-            st.subheader(f"1. Colaboradores Desligados - Filial {selected_filial}")
-            st.markdown("Colaboradores que foram orçados na filial selecionada mas não realizados (filial realizada = 00)")
-            term_df = terminated[benefit_name].copy()
-            # Convert NaN to 0 in budget and actual columns
-            term_df[prev_col] = term_df[prev_col].fillna(0)
-            term_df[real_col] = term_df[real_col].fillna(0)
-            render_employee_table(term_df, prev_col, real_col)
-            
-            # 2. New Hires
-            st.subheader(f"2. Colaboradores Contratados - Filial {selected_filial}")
-            st.markdown("Colaboradores que não foram orçados (filial orçada = 00) mas foram realizados na filial selecionada")
-            new_df = new_hires[benefit_name].copy()
-            # Convert NaN to 0 in budget and actual columns
-            new_df[prev_col] = new_df[prev_col].fillna(0)
-            new_df[real_col] = new_df[real_col].fillna(0)
-            render_employee_table(new_df, prev_col, real_col)
-            
-            # 3. Transferred Employees
-            st.subheader(f"3. Colaboradores Transferidos - Filial {selected_filial}")
-            st.markdown("Colaboradores que foram orçados na filial selecionada mas realizados em outra filial")
-            trans_df = transferred[benefit_name].copy()
-            # Convert NaN to 0 in budget and actual columns
-            trans_df[prev_col] = trans_df[prev_col].fillna(0)
-            trans_df[real_col] = trans_df[real_col].fillna(0)
-            render_employee_table(trans_df, prev_col, real_col, filial_col)
+            render_employee_table(transferred[benefit_name], prev_col, real_col, filial_col)
 
 def main():
     # Initialize session state variables
-    for key in ['processing_completed_time', 'processing_started', 'result_df', 'colaboradores_df', 'is_error_log',
-                'previous_beneficios_file', 'previous_recorrentes_file', 'previous_colaboradores_file']:
+    for key in ['processing_completed_time', 'processing_started', 'result_df', 'colaboradores_df', 'is_error_log']:
         if key not in st.session_state:
             st.session_state[key] = None if key != 'processing_started' else False
     
@@ -817,40 +811,13 @@ def main():
 
     st.title("Processador de Relatórios de Benefícios")
     st.markdown("""
+    Esta aplicação processa relatórios de benefícios, consolidando dados de diferentes fontes.
     Carregue os arquivos necessários e configure as opções para gerar o relatório final.
     """)
     
     # Sidebar for file upload and configuration
     with st.sidebar:
         beneficios_file, recorrentes_file, colaboradores_file, selected_month, month_mapping, ednaldo_mode, process_button = render_sidebar()
-    
-    # Verificar mudanças nos arquivos e limpar estado conforme necessário
-    if beneficios_file is not None and (st.session_state.previous_beneficios_file is None or 
-                                      beneficios_file.name != st.session_state.previous_beneficios_file):
-        st.session_state.previous_beneficios_file = beneficios_file.name
-        # Limpar estado relacionado ao processamento
-        st.session_state.result_df = None
-        st.session_state.is_error_log = None
-        st.session_state.processing_completed_time = None
-        st.session_state.processing_started = False
-        st.toast(f"Novo arquivo de benefícios carregado: {beneficios_file.name}", icon="📄")
-
-    if recorrentes_file is not None and (st.session_state.previous_recorrentes_file is None or 
-                                       recorrentes_file.name != st.session_state.previous_recorrentes_file):
-        st.session_state.previous_recorrentes_file = recorrentes_file.name
-        # Limpar estado relacionado ao processamento
-        st.session_state.result_df = None
-        st.session_state.is_error_log = None
-        st.session_state.processing_completed_time = None
-        st.session_state.processing_started = False
-        st.toast(f"Novo arquivo de orçamento carregado: {recorrentes_file.name}", icon="📄")
-
-    if colaboradores_file is not None and (st.session_state.previous_colaboradores_file is None or 
-                                         colaboradores_file.name != st.session_state.previous_colaboradores_file):
-        st.session_state.previous_colaboradores_file = colaboradores_file.name
-        # Limpar estado relacionado aos colaboradores
-        st.session_state.colaboradores_df = None
-        st.toast(f"Novo arquivo de colaboradores carregado: {colaboradores_file.name}", icon="📄")
     
     result_df = st.session_state.result_df
     is_error_log = st.session_state.is_error_log

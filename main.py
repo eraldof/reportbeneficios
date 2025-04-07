@@ -426,12 +426,13 @@ def merge_dataframes(consolidated: list[str], unimed, va, clin, sv, sv2=None, ed
         """
         if df is None or key_col not in df.columns or 'FINAL' not in df.columns or 'FILIAL' not in df.columns:
             return pd.DataFrame()
-        temp = df[[key_col, 'FINAL', 'FILIAL']].copy()
+        temp = df[[key_col, 'FINAL', 'FILIAL', 'CCFORMATADO']].copy()
         temp[key_col] = temp[key_col].apply(clean_cpf)
         temp = temp.rename(columns={
             key_col: 'CPF',
             'FINAL': f'realizado_{df_name}',
-            'FILIAL': f'filial_realizada_{df_name}'
+            'FILIAL': f'filial_realizada_{df_name}',
+            'CCFORMATADO': f'CC_realizado_{df_name}'
         })
 
         temp[f'filial_realizada_{df_name}'] = temp[f'filial_realizada_{df_name}'].apply(format_filial)
@@ -449,7 +450,8 @@ def merge_dataframes(consolidated: list[str], unimed, va, clin, sv, sv2=None, ed
         # Renomeia as colunas de sv2_df para manter a mesma nomenclatura de sv_df
         sv2_df = sv2_df.rename(columns={
             'realizado_sv2': 'realizado_sv',
-            'filial_realizada_sv2': 'filial_realizada_sv'
+            'filial_realizada_sv2': 'filial_realizada_sv',
+            'CC_realizado_sv2': 'CC_realizado_sv'
         })
         # Concatena verticalmente os DataFrames sv_df e sv2_df
         sv_concat = pd.concat([sv_df, sv2_df], ignore_index=True)
@@ -458,13 +460,19 @@ def merge_dataframes(consolidated: list[str], unimed, va, clin, sv, sv2=None, ed
         # - Concatena as filiais únicas separadas por vírgula
         sv_agg = sv_concat.groupby('CPF', as_index=False).agg({
             'realizado_sv': 'sum',
-            'filial_realizada_sv': lambda x: ", ".join(sorted(set(x.dropna())))
+            'filial_realizada_sv': lambda x: ", ".join(sorted(set(x.dropna()))),
+            'CC_realizado_sv': lambda x: ", ".join(sorted(set(x.dropna())))
         })
         sv_df = sv_agg
         
         if not sv_df.empty and 'filial_realizada_sv' in sv_df.columns:
             sv_df['filial_realizada_sv'] = sv_df['filial_realizada_sv'].apply(lambda x: 
                                ", ".join(format_filial(part) for part in x.split(", ")) if isinstance(x, str) else x)
+
+        if not sv_df.empty and 'CC_realizado_sv' in sv_df.columns:
+            sv_df['CC_realizado_sv'] = sv_df['CC_realizado_sv'].apply(lambda x: 
+                               ", ".join(format_filial(part) for part in x.split(", ")) if isinstance(x, str) else x)
+
 
     # Mescla cada DataFrame preparado no master_df
     for df_indiv in [unimed_df, va_df, clin_df, sv_df]:
@@ -502,10 +510,11 @@ def merge_recorrentes(df_main, df_sec):
     })
     
     df_merged = pd.merge(df_main, df_sec, left_on='CPF', right_on='CPF' , how='outer')
-    df_merged = df_merged[['CPF', 'previsto_filial', 'previsto_va', 'filial_realizada_va',  'realizado_va',
-                             'previsto_unimed', 'filial_realizada_unimed', 'realizado_unimed', 
-                             'previsto_clin', 'filial_realizada_clin',  'realizado_clin', 
-                             'previsto_sv', 'filial_realizada_sv', 'realizado_sv']]
+    df_merged = df_merged[['CPF', 'previsto_filial', 
+                             'previsto_va', 'CC_formatado_va', 'filial_realizada_va',  'realizado_va',
+                             'previsto_unimed', 'filial_realizada_unimed', 'CC_formatado_unimed', 'realizado_unimed', 
+                             'previsto_clin', 'filial_realizada_clin', 'CC_formatado_clin', 'realizado_clin', 
+                             'previsto_sv', 'filial_realizada_sv', 'CC_formatado_sv', 'realizado_sv']]
     
     df_merged.fillna({
             'filial_realizada_va': '00',
@@ -659,3 +668,78 @@ def process_report(beneficios_file, recorrentes_file, ednaldo=False,
     
     else: 
         return dataframes
+
+
+
+def process_report2(beneficios_file, bi_path, ednaldo=False, progress_callback=None):
+    """
+        2
+    """
+
+    def update_progress(progress, message=""):
+        if progress_callback:
+            progress_callback(progress, message)
+    
+    update_progress(0, "Carregando arquivos...")
+    
+    # Carregar os dados dos benefícios realizados
+    dataframes = load_excel(beneficios_file, ednaldo)
+    
+    update_progress(20, "Arquivos carregados com sucesso")
+    
+    # Initialize result_bi as None
+    result_bi = None
+    
+    if verificar_retorno(dataframes):
+        # Extrair CPFs únicos dos dataframes
+        cpfs_unicos = extract_unique_cpfs(dataframes)
+        
+        update_progress(40, "CPFs extraídos e processados")        
+        
+        # Processar os dataframes
+        if ednaldo:
+            unimed, va, clin, sv, sv2 = process_full(dataframes, ednaldo=ednaldo)
+        else:
+            unimed, va, clin, sv = process_full(dataframes, ednaldo=ednaldo)
+            sv2 = None
+        
+        update_progress(80, "Dados processados, gerando relatório final")
+        
+        # Realizar o merge dos dataframes
+        result_df = merge_dataframes(cpfs_unicos, unimed, va, clin, sv, sv2, ednaldo)
+    
+        update_progress(100, "Relatório finalizado")
+        result_bi = pd.read_excel(bi_path, 
+                                  dtype= {'COD CENTRO CUSTO': str, 
+                                        'SINTETICO': str,
+                                        'CONTA': str, 
+                                        'VALOR': float}, 
+                                usecols= ['COD CENTRO CUSTO', 'SINTETICO', 'CONTA', 'VALOR'])
+        result_bi = result_bi.rename(columns={'COD CENTRO CUSTO': 'CC', 'SINTETICO': 'FILIAL', 'CONTA': 'BENEFICIO'})
+        excluded_benefits = ['SUBSIDIO EDUCACAO', 'CURSOS E TREINAMENTOS', 'VALE TRANSPORTE']
+        result_bi = result_bi[~result_bi['BENEFICIO'].isin(excluded_benefits)]
+        filial_mapping = {
+            'CD3 - CABEDELO' : '31',
+            'CD7 - CABEDELO 2': '59',
+            'CD1 - SANTA CECILIA': '02',
+            'AST': '67',
+            'CD4 - CAMPINA GRANDE': '41',
+            'CD6 - IRECE': '58'
+        }
+        result_bi['FILIAL'] = result_bi['FILIAL'].replace(filial_mapping)
+
+        benefit_mapping = {
+            'VALE ALIMENTACAO - PAT': 'VA',
+            'ASSISTENCIA MEDICA': 'UNIMED',
+            'ASSISTENCIA ODONTOLOGICA': 'CLIN',
+            'SEGURO DE VIDA': 'SV'
+        }
+
+        result_bi['BENEFICIO'] = result_bi['BENEFICIO'].replace(benefit_mapping)
+
+        result_bi['VALOR'] = result_bi['VALOR'] * -1        
+        
+        return result_df, result_bi
+    
+    else: 
+        return dataframes, None
