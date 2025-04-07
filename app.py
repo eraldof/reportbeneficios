@@ -188,40 +188,14 @@ def load_colaboradores_file(file):
 def render_sidebar():
     st.header("Upload de Arquivos")
     
-    # Inicialize session state para armazenar nomes de arquivos anteriores
-    if 'prev_beneficios_file' not in st.session_state:
-        st.session_state.prev_beneficios_file = None
-    if 'prev_recorrentes_file' not in st.session_state:
-        st.session_state.prev_recorrentes_file = None
-    if 'prev_colaboradores_file' not in st.session_state:
-        st.session_state.prev_colaboradores_file = None
-    
-    # Botão para limpar todos os arquivos carregados
-    if st.button("Limpar todos os arquivos", key="clear_all_files"):
-        st.session_state.prev_beneficios_file = None
-        st.session_state.prev_recorrentes_file = None
-        st.session_state.prev_colaboradores_file = None
-        st.session_state.result_df = None
-        st.session_state.is_error_log = None
-        st.session_state.colaboradores_df = None
-        st.rerun()
-    
     st.subheader("Carregar arquivo de benefícios")
     beneficios_file = st.file_uploader(
         type=["xlsx"],
         help="Arquivo Excel contendo planilhas com dados de benefícios",
         label_visibility="collapsed",
         label="Carregar arquivo de beneficios",
-        key="beneficios_file_uploader"
+        key="upload_beneficios"  # Adicionada chave única
     )
-
-    # Verificar se o arquivo de benefícios mudou
-    if beneficios_file is not None and (st.session_state.prev_beneficios_file is None or 
-                                       beneficios_file.name != st.session_state.prev_beneficios_file):
-        st.session_state.prev_beneficios_file = beneficios_file.name
-        # Limpar os resultados anteriores quando um novo arquivo for carregado
-        st.session_state.result_df = None
-        st.session_state.is_error_log = None
 
     st.subheader("Carregar arquivo com o orçamento")
     recorrentes_file = st.file_uploader(
@@ -229,16 +203,8 @@ def render_sidebar():
         label_visibility="collapsed",
         type=["xlsx"],
         help="Arquivo Excel contendo dados de recorrentes",
-        key="recorrentes_file_uploader"
+        key="upload_recorrentes"  # Adicionada chave única
     )
-    
-    # Verificar se o arquivo de orçamento mudou
-    if recorrentes_file is not None and (st.session_state.prev_recorrentes_file is None or 
-                                        recorrentes_file.name != st.session_state.prev_recorrentes_file):
-        st.session_state.prev_recorrentes_file = recorrentes_file.name
-        # Limpar os resultados anteriores quando um novo arquivo for carregado
-        st.session_state.result_df = None
-        st.session_state.is_error_log = None
     
     st.subheader("Carregar arquivo de colaboradores (opcional)")
     colaboradores_file = st.file_uploader(
@@ -246,15 +212,8 @@ def render_sidebar():
         label_visibility="collapsed",
         type=["xlsx", "csv"],
         help="Arquivo contendo CPF e NOME dos colaboradores (opcional)",
-        key="colaboradores_file_uploader"
+        key="upload_colaboradores"  # Adicionada chave única
     )
-    
-    # Verificar se o arquivo de colaboradores mudou
-    if colaboradores_file is not None and (st.session_state.prev_colaboradores_file is None or 
-                                          colaboradores_file.name != st.session_state.prev_colaboradores_file):
-        st.session_state.prev_colaboradores_file = colaboradores_file.name
-        # Limpar apenas os dados de colaboradores quando um novo arquivo for carregado
-        st.session_state.colaboradores_df = None
 
     st.subheader("Opções de Processamento")
 
@@ -278,6 +237,19 @@ def render_sidebar():
                               help="Ativa o processamento com regras específicas do modo Ednaldo")
 
     process_button = st.button("Processar Dados", type="primary", use_container_width=True)
+    
+    # Add a button to clear the session state
+    st.subheader("Manutenção")
+    clear_session = st.button("🧹 Limpar Sessão", use_container_width=True,
+                             help="Limpa todos os dados de sessão e reseta o aplicativo")
+    
+    if clear_session:
+        # Clear all session state variables
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.success("Sessão limpa com sucesso!")
+        time.sleep(1)
+        st.rerun()
     
     return beneficios_file, recorrentes_file, colaboradores_file, selected_month, month_mapping, ednaldo_mode, process_button
 
@@ -765,21 +737,8 @@ def render_summary_tab(result_df):
     """
     st.write("Selecione uma filial para visualizar o resumo do relatório:")
     
-    # Create a copy and convert NaN values to 0 for budget and actual columns
-    df = result_df.copy()
-    budget_actual_cols = [
-        'previsto_va', 'realizado_va', 
-        'previsto_unimed', 'realizado_unimed', 
-        'previsto_clin', 'realizado_clin', 
-        'previsto_sv', 'realizado_sv'
-    ]
-    
-    for col in budget_actual_cols:
-        if col in df.columns:
-            df[col] = df[col].fillna(0)
-    
     # Get unique branches, excluding '00'
-    filiais = sorted([f for f in df['previsto_filial'].unique() if f != '00' and pd.notna(f)])
+    filiais = sorted([f for f in result_df['previsto_filial'].unique() if f != '00' and pd.notna(f)])
     
     if not filiais:
         st.warning("Não foram encontradas filiais válidas no relatório.")
@@ -797,9 +756,9 @@ def render_summary_tab(result_df):
         return
     
     # Process data for selected branch
-    terminated, new_hires, transferred = categorize_employees_by_branch(df, selected_filial)
+    terminated, new_hires, transferred = categorize_employees_by_branch(result_df, selected_filial)
     
-    # Define benefit columns for display
+    # Display results in tabs by benefit type
     benefit_map = {
         'Vale Alimentação': ('previsto_va', 'realizado_va', 'filial_realizada_va'),
         'Assistência Médica': ('previsto_unimed', 'realizado_unimed', 'filial_realizada_unimed'),
@@ -807,182 +766,45 @@ def render_summary_tab(result_df):
         'Seguro de Vida': ('previsto_sv', 'realizado_sv', 'filial_realizada_sv')
     }
     
-    # Consolidated view of all categories
-    st.subheader(f"Resumo para Filial: {selected_filial}")
+    # Create tabs for each benefit type
+    benefit_tabs = st.tabs(list(benefit_map.keys()))
     
-    # 1. Terminated Employees
-    st.markdown("### 1. Colaboradores Desligados")
-    st.markdown("Colaboradores que foram orçados na filial selecionada mas não realizados (filial realizada = 00)")
-    
-    # Combine all benefit types for terminated employees
-    all_terminated = pd.DataFrame()
-    for benefit_name, (prev_col, real_col, _) in benefit_map.items():
-        if not terminated[benefit_name].empty:
-            temp_df = terminated[benefit_name].copy()
-            temp_df['Tipo de Benefício'] = benefit_name
-            temp_df['Prev_Col'] = prev_col
-            temp_df['Real_Col'] = real_col
-            all_terminated = pd.concat([all_terminated, temp_df])
-    
-    if not all_terminated.empty:
-        cpf_col = next((col for col in ['CPF', 'CPFTITULAR'] if col in all_terminated.columns), None)
-        display_cols = [cpf_col, 'Tipo de Benefício']
-        
-        if 'NOME' in all_terminated.columns:
-            display_cols.append('NOME')
-        
-        display_df = all_terminated[display_cols + ['Prev_Col', 'Real_Col']].copy()
-        
-        # Add values from the appropriate columns
-        display_df['Valor Orçado'] = display_df.apply(
-            lambda row: row[row['Prev_Col']], axis=1
-        )
-        display_df['Valor Realizado'] = display_df.apply(
-            lambda row: row[row['Real_Col']], axis=1
-        )
-        
-        # Drop utility columns
-        display_df = display_df.drop(['Prev_Col', 'Real_Col'], axis=1)
-        
-        # Rename columns
-        rename_dict = {cpf_col: 'CPF'}
-        if 'NOME' in display_df.columns:
-            rename_dict['NOME'] = 'Nome Colaborador'
-        
-        display_df = display_df.rename(columns=rename_dict)
-        
-        # Format currency columns
-        display_df['Valor Orçado'] = display_df['Valor Orçado'].apply(format_currency)
-        display_df['Valor Realizado'] = display_df['Valor Realizado'].apply(format_currency)
-        
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-        
-        # Show totals
-        total_orcado = all_terminated.apply(lambda row: row[row['Prev_Col']], axis=1).sum()
-        total_realizado = all_terminated.apply(lambda row: row[row['Real_Col']], axis=1).sum()
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Orçado", format_currency(total_orcado))
-        with col2:
-            st.metric("Total Realizado", format_currency(total_realizado))
-    else:
-        st.info("Não há colaboradores desligados para exibir.")
-    
-    # 2. New Hires
-    st.markdown("### 2. Colaboradores Contratados")
-    st.markdown("Colaboradores que não foram orçados (filial orçada = 00) mas foram realizados na filial selecionada")
-    
-    # Similar approach for new hires
-    all_new_hires = pd.DataFrame()
-    for benefit_name, (prev_col, real_col, _) in benefit_map.items():
-        if not new_hires[benefit_name].empty:
-            temp_df = new_hires[benefit_name].copy()
-            temp_df['Tipo de Benefício'] = benefit_name
-            temp_df['Prev_Col'] = prev_col
-            temp_df['Real_Col'] = real_col
-            all_new_hires = pd.concat([all_new_hires, temp_df])
-    
-    if not all_new_hires.empty:
-        cpf_col = next((col for col in ['CPF', 'CPFTITULAR'] if col in all_new_hires.columns), None)
-        display_cols = [cpf_col, 'Tipo de Benefício']
-        
-        if 'NOME' in all_new_hires.columns:
-            display_cols.append('NOME')
-        
-        display_df = all_new_hires[display_cols + ['Prev_Col', 'Real_Col']].copy()
-        
-        display_df['Valor Orçado'] = display_df.apply(
-            lambda row: row[row['Prev_Col']], axis=1
-        )
-        display_df['Valor Realizado'] = display_df.apply(
-            lambda row: row[row['Real_Col']], axis=1
-        )
-        
-        display_df = display_df.drop(['Prev_Col', 'Real_Col'], axis=1)
-        
-        rename_dict = {cpf_col: 'CPF'}
-        if 'NOME' in display_df.columns:
-            rename_dict['NOME'] = 'Nome Colaborador'
-        
-        display_df = display_df.rename(columns=rename_dict)
-        
-        display_df['Valor Orçado'] = display_df['Valor Orçado'].apply(format_currency)
-        display_df['Valor Realizado'] = display_df['Valor Realizado'].apply(format_currency)
-        
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-        
-        total_orcado = all_new_hires.apply(lambda row: row[row['Prev_Col']], axis=1).sum()
-        total_realizado = all_new_hires.apply(lambda row: row[row['Real_Col']], axis=1).sum()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Orçado", format_currency(total_orcado))
-        with col2:
-            st.metric("Total Realizado", format_currency(total_realizado))
-    else:
-        st.info("Não há novos colaboradores para exibir.")
-    
-    # 3. Transferred Employees
-    st.markdown("### 3. Colaboradores Transferidos")
-    st.markdown("Colaboradores que foram orçados na filial selecionada mas realizados em outra filial")
-    
-    all_transferred = pd.DataFrame()
-    for benefit_name, (prev_col, real_col, filial_col) in benefit_map.items():
-        if not transferred[benefit_name].empty:
-            temp_df = transferred[benefit_name].copy()
-            temp_df['Tipo de Benefício'] = benefit_name
-            temp_df['Prev_Col'] = prev_col
-            temp_df['Real_Col'] = real_col
-            temp_df['Filial_Col'] = filial_col
-            all_transferred = pd.concat([all_transferred, temp_df])
-    
-    if not all_transferred.empty:
-        cpf_col = next((col for col in ['CPF', 'CPFTITULAR'] if col in all_transferred.columns), None)
-        display_cols = [cpf_col, 'Tipo de Benefício']
-        
-        if 'NOME' in all_transferred.columns:
-            display_cols.append('NOME')
-        
-        display_df = all_transferred[display_cols + ['Prev_Col', 'Real_Col', 'Filial_Col']].copy()
-        
-        display_df['Valor Orçado'] = display_df.apply(
-            lambda row: row[row['Prev_Col']], axis=1
-        )
-        display_df['Valor Realizado'] = display_df.apply(
-            lambda row: row[row['Real_Col']], axis=1
-        )
-        display_df['Filial Realizada'] = display_df.apply(
-            lambda row: row[row['Filial_Col']], axis=1
-        )
-        
-        display_df = display_df.drop(['Prev_Col', 'Real_Col', 'Filial_Col'], axis=1)
-        
-        rename_dict = {cpf_col: 'CPF'}
-        if 'NOME' in display_df.columns:
-            rename_dict['NOME'] = 'Nome Colaborador'
-        
-        display_df = display_df.rename(columns=rename_dict)
-        
-        display_df['Valor Orçado'] = display_df['Valor Orçado'].apply(format_currency)
-        display_df['Valor Realizado'] = display_df['Valor Realizado'].apply(format_currency)
-        
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-        
-        total_orcado = all_transferred.apply(lambda row: row[row['Prev_Col']], axis=1).sum()
-        total_realizado = all_transferred.apply(lambda row: row[row['Real_Col']], axis=1).sum()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Orçado", format_currency(total_orcado))
-        with col2:
-            st.metric("Total Realizado", format_currency(total_realizado))
-    else:
-        st.info("Não há colaboradores transferidos para exibir.")
+    # Process each benefit type in its corresponding tab
+    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
+        with benefit_tabs[i]:
+            prev_col, real_col, filial_col = cols
+            
+            # 1. Terminated Employees
+            st.subheader(f"1. Colaboradores Desligados - Filial {selected_filial}")
+            st.markdown("Colaboradores que foram orçados na filial selecionada mas não realizados (filial realizada = 00)")
+            term_df = terminated[benefit_name].copy()
+            # Convert NaN to 0 in budget and actual columns
+            term_df[prev_col] = term_df[prev_col].fillna(0)
+            term_df[real_col] = term_df[real_col].fillna(0)
+            render_employee_table(term_df, prev_col, real_col)
+            
+            # 2. New Hires
+            st.subheader(f"2. Colaboradores Contratados - Filial {selected_filial}")
+            st.markdown("Colaboradores que não foram orçados (filial orçada = 00) mas foram realizados na filial selecionada")
+            new_df = new_hires[benefit_name].copy()
+            # Convert NaN to 0 in budget and actual columns
+            new_df[prev_col] = new_df[prev_col].fillna(0)
+            new_df[real_col] = new_df[real_col].fillna(0)
+            render_employee_table(new_df, prev_col, real_col)
+            
+            # 3. Transferred Employees
+            st.subheader(f"3. Colaboradores Transferidos - Filial {selected_filial}")
+            st.markdown("Colaboradores que foram orçados na filial selecionada mas realizados em outra filial")
+            trans_df = transferred[benefit_name].copy()
+            # Convert NaN to 0 in budget and actual columns
+            trans_df[prev_col] = trans_df[prev_col].fillna(0)
+            trans_df[real_col] = trans_df[real_col].fillna(0)
+            render_employee_table(trans_df, prev_col, real_col, filial_col)
 
 def main():
     # Initialize session state variables
-    for key in ['processing_completed_time', 'processing_started', 'result_df', 'colaboradores_df', 'is_error_log']:
+    for key in ['processing_completed_time', 'processing_started', 'result_df', 'colaboradores_df', 'is_error_log',
+                'previous_beneficios_file', 'previous_recorrentes_file', 'previous_colaboradores_file']:
         if key not in st.session_state:
             st.session_state[key] = None if key != 'processing_started' else False
     
@@ -1001,6 +823,34 @@ def main():
     # Sidebar for file upload and configuration
     with st.sidebar:
         beneficios_file, recorrentes_file, colaboradores_file, selected_month, month_mapping, ednaldo_mode, process_button = render_sidebar()
+    
+    # Verificar mudanças nos arquivos e limpar estado conforme necessário
+    if beneficios_file is not None and (st.session_state.previous_beneficios_file is None or 
+                                      beneficios_file.name != st.session_state.previous_beneficios_file):
+        st.session_state.previous_beneficios_file = beneficios_file.name
+        # Limpar estado relacionado ao processamento
+        st.session_state.result_df = None
+        st.session_state.is_error_log = None
+        st.session_state.processing_completed_time = None
+        st.session_state.processing_started = False
+        st.toast(f"Novo arquivo de benefícios carregado: {beneficios_file.name}", icon="📄")
+
+    if recorrentes_file is not None and (st.session_state.previous_recorrentes_file is None or 
+                                       recorrentes_file.name != st.session_state.previous_recorrentes_file):
+        st.session_state.previous_recorrentes_file = recorrentes_file.name
+        # Limpar estado relacionado ao processamento
+        st.session_state.result_df = None
+        st.session_state.is_error_log = None
+        st.session_state.processing_completed_time = None
+        st.session_state.processing_started = False
+        st.toast(f"Novo arquivo de orçamento carregado: {recorrentes_file.name}", icon="📄")
+
+    if colaboradores_file is not None and (st.session_state.previous_colaboradores_file is None or 
+                                         colaboradores_file.name != st.session_state.previous_colaboradores_file):
+        st.session_state.previous_colaboradores_file = colaboradores_file.name
+        # Limpar estado relacionado aos colaboradores
+        st.session_state.colaboradores_df = None
+        st.toast(f"Novo arquivo de colaboradores carregado: {colaboradores_file.name}", icon="📄")
     
     result_df = st.session_state.result_df
     is_error_log = st.session_state.is_error_log
