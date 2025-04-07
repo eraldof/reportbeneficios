@@ -1,65 +1,243 @@
 import pandas as pd
 import unicodedata
 import re
-import argparse
 from datetime import datetime
-import io
-import os
-import threading
-import time
 
-def clean_acentuacao(text):
+def convert_to_float(value):
+    """
+    Converte uma representação de número para float.
+
+    A função trata os seguintes casos:
+    - Valores vazios ou NaN (retorna 0.0)
+    - Vírgula como separador decimal
+    - Tentativas de conversão com diferentes formatos
+
+    Parâmetros:
+    ------------
+    value : str, int, float, etc.
+        O valor que será convertido para float.
+
+    Retorno:
+    ---------
+    float
+        O valor convertido como float ou None se a conversão falhar.
+
+    Exemplo:
+    --------
+    >>> convert_to_float("1.234,56")
+    1234.56
+
+    >>> convert_to_float("R$ 89,90")
+    89.9
+
+    >>> convert_to_float("")
+    0.0
+
+    >>> convert_to_float("abc")
+    None
+    """
+    if pd.isna(value) or value == '':
+        return 0.0
+
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        try:
+            return float(str(value).replace(',', '.'))
+        except (ValueError, TypeError):
+            try:
+                cleaned = re.sub(r'[^\d.,]', '', str(value))
+                cleaned = cleaned.replace(',', '.')
+                return float(cleaned)
+            except:
+                return None
+
+def clean_text(text, column_name: bool = False):
+    """
+    Normaliza e limpa uma string removendo acentos, pontuações e espaços em branco.
+
+    Etapas do processamento:
+    - Converte caracteres acentuados para suas formas não acentuadas (ex: 'á' → 'a')
+    - Remove marcas de acento (combining characters)
+    - Remove pontuações e caracteres especiais
+    - Remove todos os espaços (inclusive quebras de linha, tabulações, etc.)
+
+    Parâmetros:
+    ----------
+    text : str
+        Texto de entrada a ser limpo.
+
+    Retorna:
+    -------
+    str
+        Texto limpo, sem acentos, pontuações ou espaços.
+
+    Exemplo:
+    --------
+    >>> clean_text("Olá, mundo! Tudo bem?")
+    'OlamundoTudobem'
+    """
     text = unicodedata.normalize('NFKD', str(text))
     text = ''.join([c for c in text if not unicodedata.combining(c)])
-    text = re.sub(r'[^\w\s]', '', text)
+    if column_name:
+        text = re.sub(r'[^A-Za-z\s]', '', text)  # Remove números e pontuação
+    else:        
+        text = re.sub(r'[^\w\s]', '', text)
     text = re.sub(r'\s+', '', text)
     return text
 
-def load_excel(file_path):
-    if isinstance(file_path, str):
-        excel_file = pd.ExcelFile(file_path)
-    else:
-        excel_file = pd.ExcelFile(file_path)
+def load_excel(caminho_entrada: str, Ednaldo: bool = None):
+    """
+    Carrega planilhas Excel que seguem um determinado padrão de nome.
+    
+    Args:
+        caminho_entrada (string): Caminho para o arquivo Excel.
+        Ednaldo (bool): Parâmetro que determina quais planilhas serão carregadas.
+    
+    Returns:
+        Se todas as planilhas forem carregadas com sucesso:
+        - Dicionário com os dataframes das planilhas válidas.
         
-    worksheet_names = excel_file.sheet_names  
+        Se houver qualquer problema:
+        - Dicionário com logs explicando por que cada planilha foi ou não carregada.
+    """
+    import pandas as pd
     
-    dataframes = {}
-    for sheet_name in worksheet_names:
-        dataframes[sheet_name] = pd.read_excel(excel_file, sheet_name=sheet_name, dtype=str)
+    planilhas_validas = ["UNIMED", "CLIN", "VA", "SV"]
+    if Ednaldo is True:
+        planilhas_validas.append("SV2")
     
-    for sheet_name, df in dataframes.items():
-        column_mapping = {col: clean_acentuacao(col.upper()) for col in df.columns}
-        dataframes[sheet_name] = df.rename(columns=column_mapping)
-
-    processed_dataframes = {}
-    for sheet_name, df in dataframes.items():
-        new_sheet_name = clean_acentuacao(sheet_name.upper())
-        processed_dataframes[new_sheet_name] = df
-
-    return processed_dataframes
-
-def check_columns(df, search_terms):
-    matching_columns = []
-    for col in df.columns:
-        for term in search_terms:
-            if col == term or term in col:
-                matching_columns.append(col)
+    colunas_obrigatorias = {
+        "UNIMED": ["CPFTITULAR", "CPFBENEFICIARIO", "CCFORMATADO", "FILIAL", "VALOR", "406"],
+        "CLIN": ["CPFTITULAR", "CCFORMATADO", "FILIAL", "CPFBENEFICIARIO", "VALOR", "441", "442"],
+        "VA": ["CPFTITULAR", "FILIAL", "CCFORMATADO", "VALOR", "424"],
+        "SV": ["CCFORMATADO", "CPFTITULAR", "FILIAL", "VALOR"],
+        "SV2": ["CPFTITULAR", "CCFORMATADO", "VALOR", "FILIAL"]
+    }
+    
+    logs_carregamento = {}
+    
+    try:
+        excel_file = pd.ExcelFile(caminho_entrada)
+        
+        dataframes_processados = {}
+        for nome_planilha in excel_file.sheet_names:
+            logs_carregamento[nome_planilha] = {}
+            logs_carregamento[nome_planilha]['status'] = 'Não carregada'
+            
+            nome_padronizado = clean_text(nome_planilha).upper()
+            logs_carregamento[nome_planilha]['nome_padronizado'] = nome_padronizado
+            
+            tipo_planilha_encontrado = None
+            for planilha_valida in planilhas_validas:
+                if nome_padronizado == clean_text(planilha_valida).upper():
+                    tipo_planilha_encontrado = planilha_valida
+                    break
+            
+            if tipo_planilha_encontrado is None:
+                logs_carregamento[nome_planilha]['motivo'] = f"Nome não reconhecido. Esperado um dos seguintes: {', '.join(planilhas_validas)}"
+                continue
+                
+            logs_carregamento[nome_planilha]['tipo_planilha'] = tipo_planilha_encontrado
+            
+            try:
+                # Lê todas as colunas inicialmente para identificação
+                df_completo = pd.read_excel(excel_file, sheet_name=nome_planilha, dtype=str)
+                
+                colunas_necessarias = colunas_obrigatorias[tipo_planilha_encontrado]
+                colunas_existentes = df_completo.columns.tolist()
+                
+                # Mapeia as colunas obrigatórias para os nomes reais no arquivo
+                mapeamento_colunas = {}
+                colunas_faltantes = []
+                
+                for col_req in colunas_necessarias:
+                    col_req_clean = clean_text(col_req).upper()
+                    encontrada = False
+                    for col_exist in colunas_existentes:
+                        if col_req_clean in clean_text(col_exist).upper():
+                            mapeamento_colunas[col_exist] = col_req
+                            encontrada = True
+                            break
+                    if not encontrada:
+                        colunas_faltantes.append(col_req)
+                
+                if colunas_faltantes:
+                    logs_carregamento[nome_planilha]['motivo'] = f"Colunas obrigatórias faltantes: {', '.join(colunas_faltantes)}"
+                    continue
+                
+                # Carrega apenas as colunas obrigatórias mapeadas
+                colunas_para_carregar = list(mapeamento_colunas.keys())
+                df = pd.read_excel(excel_file, sheet_name=nome_planilha, usecols=colunas_para_carregar, dtype=str)
+                
+                # Renomeia para os nomes padronizados
+                df = df.rename(columns=mapeamento_colunas)
+                
+                dataframes_processados[tipo_planilha_encontrado] = df
+                logs_carregamento[nome_planilha]['status'] = 'Carregada com sucesso'
+                logs_carregamento[nome_planilha]['linhas'] = len(df)
+                logs_carregamento[nome_planilha]['colunas'] = list(df.columns)
+            except Exception as e:
+                logs_carregamento[nome_planilha]['motivo'] = f"Erro ao processar: {str(e)}"
+        
+        planilhas_encontradas = [logs_carregamento[p]['tipo_planilha'] for p in logs_carregamento 
+                               if 'tipo_planilha' in logs_carregamento[p]]
+        planilhas_nao_encontradas = [p for p in planilhas_validas if p not in planilhas_encontradas]
+        
+        if planilhas_nao_encontradas:
+            logs_carregamento['resumo'] = f"Planilhas esperadas não encontradas: {', '.join(planilhas_nao_encontradas)}"
+            return logs_carregamento  # Retorna apenas os logs se alguma planilha estiver faltando
+        
+        # Verifica se todas as planilhas carregadas foram processadas com sucesso
+        todas_carregadas_com_sucesso = True
+        for nome_planilha in logs_carregamento:
+            if nome_planilha != 'resumo' and logs_carregamento[nome_planilha].get('status') != 'Carregada com sucesso':
+                todas_carregadas_com_sucesso = False
                 break
-    return matching_columns
-
-def analyze_dataframes(dataframes):
-    search_terms = ['424', 'CPF', 'FILIAL', 'VALOR', 'TITULAR',
-                   '441', '442', 'PARENTESCO', 'TIPO', '406', 'SINTRACAP']
+        
+        if todas_carregadas_com_sucesso and len(dataframes_processados) == len(planilhas_encontradas):
+            return dataframes_processados  # Retorna apenas os dataframes se tudo foi bem sucedido
+        else:
+            return logs_carregamento  # Retorna apenas os logs se houve problemas no carregamento
+        
+    except Exception as e:
+        error_msg = f"Erro ao carregar a planilha: {e}"
+        print(error_msg)
+        logs_carregamento['erro_geral'] = error_msg
+        return logs_carregamento  # Retorna apenas os logs em caso de erro geral
     
-    results = {}
-    for name, df in dataframes.items():
-        matched_cols = check_columns(df, search_terms)
-        if matched_cols:
-            results[name] = matched_cols
-    
-    return results
 
 def extract_unique_cpfs(dataframes):
+    """
+    Extrai e retorna uma lista de CPFs únicos a partir de múltiplos DataFrames.
+
+    A função percorre um dicionário de DataFrames, procura por colunas cujo nome contenha termos relacionados a CPF,
+    aplica uma função de limpeza (clean_text) para padronizar os valores e retorna apenas os CPFs válidos (com pelo menos 11 caracteres).
+
+    Parâmetros:
+    -----------
+    dataframes : dict
+        Um dicionário onde as chaves são nomes (strings) e os valores são objetos pandas.DataFrame.
+
+    Retorno:
+    --------
+    list
+        Lista de CPFs únicos encontrados nos DataFrames, já limpos e filtrados.
+
+    Exemplo:
+    --------
+    >>> def clean_text(text):
+    ...     return ''.join(filter(str.isdigit, text))
+    
+    >>> import pandas as pd
+    >>> dfs = {
+    ...     "planilha1": pd.DataFrame({"CPFTITULAR": ["123.456.789-00", "111.222.333-44"]}),
+    ...     "planilha2": pd.DataFrame({"OUTRA_COLUNA": ["teste"], "CPFTITULAR": ["12345678900"]}),
+    ... }
+    >>> extract_unique_cpfs(dfs)
+    ['11122233344', '12345678900']
+    """
+    
     all_cpfs = []
     cpf_terms = ['CPFTITULAR']
     
@@ -70,285 +248,414 @@ def extract_unique_cpfs(dataframes):
                 cpf_columns.append(col)
         
         for col in cpf_columns:
-            cpfs = df[col].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
+            cpfs = df[col].apply(lambda x: clean_text(str(x)) if pd.notna(x) else None)
             valid_cpfs = [cpf for cpf in cpfs.dropna().tolist() if cpf and len(cpf) >= 11]
             all_cpfs.extend(valid_cpfs)
 
     unique_cpfs = list(set(all_cpfs))
     return unique_cpfs
 
-def process_dataframe(df, is_sv2=False):
+
+
+def process_dataframe(df):
+    """
+    Processa um DataFrame convertendo colunas numéricas a partir de 'VALOR' para float
+    e calcula a coluna 'FINAL' como a diferença entre 'VALOR' e as colunas seguintes.
+
+    A função:
+    - Converte colunas a partir de 'VALOR' para float, tratando vírgulas como separador decimal.
+    - Cria a coluna 'FINAL' como: VALOR - coluna1 - coluna2 - ...
+
+    Parâmetros:
+    -----------
+    df : pandas.DataFrame
+        DataFrame contendo a coluna 'VALOR' e outras colunas numéricas a serem subtraídas.
+
+    Retorno:
+    --------
+    pandas.DataFrame
+        DataFrame com colunas numéricas tratadas e a coluna 'FINAL' adicionada.
+
+    Exemplo:
+    --------
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({
+    ...     'VALOR': ['1000', '2000'],
+    ...     'DESCONTO': ['200', '300'],
+    ...     'EXTRA': ['100', '200']
+    ... })
+    >>> process_dataframe(df)
+       VALOR  DESCONTO  EXTRA  FINAL
+    0  1000.0     200.0  100.0  700.0
+    1  2000.0     300.0  200.0  1500.0
+    """
     processed_df = df.copy()
-    
-    def convert_to_float(value):
-        if pd.isna(value) or value == '':
-            return 0.0
-        try:
-            return float(value)
-        except ValueError:
-            try:
-                return float(str(value).replace(',', '.'))
-            except:
-                return None
-    
-    if is_sv2:
-        if 'SINTRACAP' in processed_df.columns:
-            processed_df['SINTRACAP'] = processed_df['SINTRACAP'].apply(convert_to_float)
-        return processed_df
-    
+
     if 'VALOR' not in processed_df.columns:
         return processed_df
-    
-    valor_index = list(processed_df.columns).index('VALOR')
-    numeric_columns = list(processed_df.columns)[valor_index:]
-    
+
+    valor_index = processed_df.columns.get_loc('VALOR')
+    numeric_columns = processed_df.columns[valor_index:]
+
     for col in numeric_columns:
         processed_df[col] = processed_df[col].apply(convert_to_float)
 
     processed_df['FINAL'] = processed_df['VALOR']
     for col in numeric_columns[1:]:
-        processed_df['FINAL'] = processed_df['FINAL'] - processed_df[col]
-    
+        processed_df['FINAL'] -= processed_df[col]
+
     return processed_df
 
-def process_full(dataframes, ednaldo=False):
+def process_full(dataframes: dict[str, pd.DataFrame], ednaldo: bool = None):
+    """
+    Processa múltiplos DataFrames aplicando a função process_dataframe em cada um.
+
+    A função espera um dicionário com chaves específicas como 'UNIMED', 'VA', 'CLIN', 'SV' e opcionalmente 'SV2'.
+    Se `ednaldo` for fornecido, também processa a aba 'SV2'.
+
+    Parâmetros:
+    ------------
+    dataframes : dict[str, pd.DataFrame]
+        Dicionário onde as chaves são nomes das planilhas e os valores são DataFrames.
+    ednaldo : bool, opcional
+        Se fornecido (True ou False), também processa a planilha 'SV2'.
+
+    Retorno:
+    ---------
+    tuple
+        Tupla contendo os DataFrames processados na seguinte ordem:
+        - Se `ednaldo` for fornecido: (unimed, va, clin, sv, sv2)
+        - Caso contrário: (unimed, va, clin, sv)
+
+    Exemplo:
+    --------
+    >>> dfs = {
+    ...     'UNIMED': pd.DataFrame(...),
+    ...     'VA': pd.DataFrame(...),
+    ...     'CLIN': pd.DataFrame(...),
+    ...     'SV': pd.DataFrame(...),
+    ...     'SV2': pd.DataFrame(...)
+    ... }
+    >>> process_full(dfs, ednaldo=True)
+    """
+    keys = ['UNIMED', 'VA', 'CLIN', 'SV']
     if ednaldo:
-        unimed = dataframes.get('UNIMED')
-        va = dataframes.get('VA')
-        clin = dataframes.get('CLIN')
-        sv = dataframes.get('SURA')
-        sv2 = dataframes.get('BEMMAIS')
-        unimed = process_dataframe(unimed)
-        va = process_dataframe(va)
-        clin = process_dataframe(clin)
-        sv = process_dataframe(sv)
-        sv2 = process_dataframe(sv2, is_sv2=True)
-        return unimed, va, clin, sv, sv2
-    else:
-        unimed = dataframes.get('UNIMED')
-        va = dataframes.get('VA')
-        clin = dataframes.get('CLIN')
-        sv = dataframes.get('SV')
-        unimed = process_dataframe(unimed)
-        va = process_dataframe(va)
-        clin = process_dataframe(clin)
-        sv = process_dataframe(sv)
-        return unimed, va, clin, sv
+        keys.append('SV2')
+
+    processed = [process_dataframe(dataframes.get(key)) for key in keys]
+
+    return tuple(processed)
+
+
+
+def merge_dataframes(consolidated: list[str], unimed, va, clin, sv, sv2=None, ednaldo=False):
+    """
+    Realiza a união (merge) de múltiplos DataFrames baseados em CPFs únicos, padronizando as chaves
+    e renomeando as colunas de resultado para indicar a origem dos dados.
+    
+    Detalhes:
+      - Para VA, SV e SV2, a chave utilizada é a coluna "CPFTITULAR" (após limpeza).
+      - Para UNIMED e CLIN, a chave utilizada é a coluna "CPFBENEFICIARIO" (após limpeza).
+      - Em cada DataFrame, são extraídas as colunas "FINAL" e "FILIAL", que serão renomeadas para:
+            realizado_<fonte> e filial_realizada_<fonte>
+      - Se o parâmetro ednaldo for True e SV2 for fornecido, os dataframes SV e SV2 serão combinados para
+        formar os dados referentes à fonte SV. Para cada CPF, se SV2 apresentar valor, esse valor é utilizado;
+        caso contrário, utiliza-se o valor de SV.
+      - O dataframe consolidated serve como base para a união e deve conter a coluna de CPF (pode ser 
+        CPFTITULAR ou CPFBENEFICIARIO). O resultado final conterá os CPFs únicos e as colunas:
+            CPF,
+            realizado_va, filial_realizada_va,
+            realizado_unimed, filial_realizada_unimed,
+            realizado_clin, filial_realizada_clin,
+            realizado_sv, filial_realizada_sv
+    
+    Parâmetros:
+    -----------
+    consolidated : list[str]
+        Lista com cpfs unicos a serem utilizados como base para o merge.
+    unimed : pandas.DataFrame
+        DataFrame da UNIMED. Deve conter as colunas "CPFBENEFICIARIO", "FINAL" e "FILIAL".
+    va : pandas.DataFrame
+        DataFrame da VA. Deve conter as colunas "CPFTITULAR", "FINAL" e "FILIAL".
+    clin : pandas.DataFrame
+        DataFrame da CLIN. Deve conter as colunas "CPFBENEFICIARIO", "FINAL" e "FILIAL".
+    sv : pandas.DataFrame
+        DataFrame da SV. Deve conter as colunas "CPFTITULAR", "FINAL" e "FILIAL".
+    sv2 : pandas.DataFrame, opcional
+        DataFrame da SV2. Deve conter as colunas "CPFTITULAR", "FINAL" e "FILIAL".
+    ednaldo : bool, opcional
+        Se True, indica que os dados de SV2 devem ser combinados com os de SV para a formação dos dados da fonte SV.
+    
+    Retorno:
+    --------
+    pandas.DataFrame
+        DataFrame resultante com as colunas:
+            CPF,
+            realizado_va, filial_realizada_va,
+            realizado_unimed, filial_realizada_unimed,
+            realizado_clin, filial_realizada_clin,
+            realizado_sv, filial_realizada_sv
+    
+    Exemplo:
+    --------
+    >>> # Suponha que os DataFrames consolidated_df, unimed, va, clin, sv e sv2 já estejam carregados e processados.
+    >>> resultado = merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2, ednaldo=True)
+    >>> resultado.head()
+    """
+
+    master_df = pd.DataFrame({'CPF': consolidated})
+
+    def format_filial(value):
+        if pd.isna(value) or not isinstance(value, str):
+            return value
+        value = value.split(' - ')[0]
+        numeros = re.findall(r'\d+', value)
+        return str(numeros[0].zfill(2)) if numeros else None
+
+
+
+    def clean_cpf(x):
+        return clean_text(str(x)) if pd.notna(x) else None
+
+    def prepare_df(df, key_col, df_name):
+        """
+        Extrai as colunas de interesse e renomeia:
+          - key_col -> CPF (após limpeza)
+          - FINAL -> realizado_<df_name>
+          - FILIAL -> filial_realizada_<df_name>
+        """
+        if df is None or key_col not in df.columns or 'FINAL' not in df.columns or 'FILIAL' not in df.columns:
+            return pd.DataFrame()
+        temp = df[[key_col, 'FINAL', 'FILIAL']].copy()
+        temp[key_col] = temp[key_col].apply(clean_cpf)
+        temp = temp.rename(columns={
+            key_col: 'CPF',
+            'FINAL': f'realizado_{df_name}',
+            'FILIAL': f'filial_realizada_{df_name}'
+        })
+
+        temp[f'filial_realizada_{df_name}'] = temp[f'filial_realizada_{df_name}'].apply(format_filial)
+        temp[f'realizado_{df_name}'] = temp[f'realizado_{df_name}'].round(2)
+        return temp
+
+    # Preparar os DataFrames individuais
+    unimed_df = prepare_df(unimed, 'CPFBENEFICIARIO', 'unimed')
+    va_df     = prepare_df(va, 'CPFTITULAR', 'va')
+    clin_df   = prepare_df(clin, 'CPFBENEFICIARIO', 'clin')
+    sv_df     = prepare_df(sv, 'CPFTITULAR', 'sv')
+
+    if ednaldo and sv2 is not None:
+        sv2_df = prepare_df(sv2, 'CPFTITULAR', 'sv2')
+        # Renomeia as colunas de sv2_df para manter a mesma nomenclatura de sv_df
+        sv2_df = sv2_df.rename(columns={
+            'realizado_sv2': 'realizado_sv',
+            'filial_realizada_sv2': 'filial_realizada_sv'
+        })
+        # Concatena verticalmente os DataFrames sv_df e sv2_df
+        sv_concat = pd.concat([sv_df, sv2_df], ignore_index=True)
+        # Agrega por CPF:
+        # - Soma os valores de realizado_sv
+        # - Concatena as filiais únicas separadas por vírgula
+        sv_agg = sv_concat.groupby('CPF', as_index=False).agg({
+            'realizado_sv': 'sum',
+            'filial_realizada_sv': lambda x: ", ".join(sorted(set(x.dropna())))
+        })
+        sv_df = sv_agg
+        
+        if not sv_df.empty and 'filial_realizada_sv' in sv_df.columns:
+            sv_df['filial_realizada_sv'] = sv_df['filial_realizada_sv'].apply(lambda x: 
+                               ", ".join(format_filial(part) for part in x.split(", ")) if isinstance(x, str) else x)
+
+    # Mescla cada DataFrame preparado no master_df
+    for df_indiv in [unimed_df, va_df, clin_df, sv_df]:
+        if not df_indiv.empty:
+            master_df = master_df.merge(df_indiv, on='CPF', how='left')
+
+
+    master_df = master_df.sort_values('CPF').reset_index(drop=True)
+    return master_df
+
 
 def load_recorrentes(recorrentes_file, mes_analise):
-    recorrente = pd.read_excel(recorrentes_file, dtype=str)
+    recorrente = pd.read_excel(recorrentes_file, dtype= {'CPF': str, 'ANOMES': str, 'FILIAL': str, 
+                                                         'VALE ALIMENTACAO': float, 'ASSISTENCIA MEDICA': float,
+                                                         'SEGURO DE VIDA': float, 'ASSISTENCIA ODONTOLOGICA': float}, 
+                               usecols= ['CPF', 'ANOMES', 'FILIAL', 'VALE ALIMENTACAO', 
+                                        'ASSISTENCIA MEDICA', 'SEGURO DE VIDA', 'ASSISTENCIA ODONTOLOGICA']
+        )
     recorrente['CPF'] = recorrente['CPF'].fillna('').str.replace('.', '').str.replace('-', '').str.zfill(11)
-            
+    recorrente['FILIAL'] = recorrente['FILIAL'].str.zfill(2)    
     atual_ano = datetime.now().strftime('%Y')
     anomes = f"{atual_ano}{mes_analise}"
     recorrente = recorrente[recorrente['ANOMES'] == anomes]
-    return recorrente, list(set(recorrente['CPF']))
+    recorrente.drop(columns=['ANOMES'], inplace=True)
+    return recorrente
 
-def merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2=None, ednaldo=False):
-    if ednaldo:
-        if consolidated_df is not None and 'CPFTITULAR' not in consolidated_df.columns:
-            print("ERRO: CPFTITULAR não existe no consolidated_df")
-            print("Colunas disponíveis:", consolidated_df.columns.tolist())
 
-        if unimed is not None and 'CPFTITULAR' in unimed.columns:
-            unimed['CPFBENEFICIARIO'] = unimed['CPFBENEFICIARIO'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if va is not None and 'CPFTITULAR' in va.columns:
-            va['CPFTITULAR'] = va['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if clin is not None and 'CPFTITULAR' in clin.columns:
-            clin['CPFDOBENEFICIARIO'] = clin['CPFDOBENEFICIARIO'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if sv is not None and 'CPFTITULAR' in sv.columns:
-            sv['CPFTITULAR'] = sv['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if sv2 is not None and 'CPFTITULAR' in sv2.columns:
-            sv2['CPFTITULAR'] = sv2['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-
-        unimed_merge = pd.DataFrame()
-        va_merge = pd.DataFrame()
-        clin_merge = pd.DataFrame()
-        sv_merge = pd.DataFrame()
-        sv2_merge = pd.DataFrame()
-
-        if unimed is not None and 'CPFBENEFICIARIO' in unimed.columns and 'FINAL' in unimed.columns:
-            unimed_merge = unimed[['CPFBENEFICIARIO', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_unimed',
-                                                                                            'FILIAL': 'frealizado_un'})
-        if va is not None and 'CPFTITULAR' in va.columns and 'FINAL' in va.columns:
-            va_merge = va[['CPFTITULAR', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_va',
-                                                                                'FILIAL': 'frealizado_va'})
-        if clin is not None and 'CPFDOBENEFICIARIO' in clin.columns and 'FINAL' in clin.columns:
-            clin_merge = clin[['CPFDOBENEFICIARIO', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_clin',
-                                                                                        'FILIAL': 'frealizado_cl'})
-        if sv is not None and 'CPFTITULAR' in sv.columns and 'VALOR' in sv.columns:
-            sv_merge = sv[['CPFTITULAR', 'VALOR', 'FILIAL']].rename(columns={'VALOR': 'VALOR_sv',
-                                                                                'FILIAL': 'frealizado_sv'})
-        if sv2 is not None and 'CPFTITULAR' in sv2.columns and 'SINTRACAP' in sv2.columns:
-            sv2_merge = sv2[['CPFTITULAR', 'SINTRACAP', 'FILIAL']]
-
-        result_df = consolidated_df.copy()
-
-        if not unimed_merge.empty:
-            result_df = result_df.merge(unimed_merge,  left_on= 'CPFTITULAR', right_on='CPFBENEFICIARIO', how='left')
-        if not va_merge.empty:
-            result_df = result_df.merge(va_merge, on='CPFTITULAR', how='left')
-        if not clin_merge.empty:
-            result_df = result_df.merge(clin_merge, left_on= 'CPFTITULAR', right_on='CPFDOBENEFICIARIO', how='left')
-        if not sv_merge.empty:
-            result_df = result_df.merge(sv_merge, on='CPFTITULAR', how='left')
-        if not sv2_merge.empty:
-            result_df = result_df.merge(sv2_merge, on='CPFTITULAR', how='left')
-
-        result_df['SEGURO_VIDA'] = result_df['SINTRACAP']
-        result_df['realizado_sv'] = result_df.apply(
-            lambda row: row['VALOR_sv'] if (pd.isna(row['SINTRACAP']) or row['SINTRACAP'] == 0) and pd.notna(row['VALOR_sv']) else row['SEGURO_VIDA'], 
-            axis=1
-        )
-
-        result_df.drop(columns=['SINTRACAP', 'SEGURO_VIDA', 'VALOR_sv', 'CPFBENEFICIARIO', 'CPFDOBENEFICIARIO', 'FILIAL'], inplace=True)
-
-    else:
-        if consolidated_df is not None and 'CPFTITULAR' not in consolidated_df.columns:
-            print("ERRO: CPFTITULAR não existe no consolidated_df")
-            print("Colunas disponíveis:", consolidated_df.columns.tolist())
-
-        if unimed is not None and 'CPFTITULAR' in unimed.columns:
-            unimed['CPFDOBENEFICIARIO'] = unimed['CPFDOBENEFICIARIO'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if va is not None and 'CPFTITULAR' in va.columns:
-            va['CPFTITULAR'] = va['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if clin is not None and 'CPFTITULAR' in clin.columns:
-            clin['CPFDOBENEFICIARIO'] = clin['CPFDOBENEFICIARIO'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-        if sv is not None and 'CPFTITULAR' in sv.columns:
-            sv['CPFTITULAR'] = sv['CPFTITULAR'].apply(lambda x: clean_acentuacao(str(x)) if pd.notna(x) else None)
-
-        unimed_merge = pd.DataFrame()
-        va_merge = pd.DataFrame()
-        clin_merge = pd.DataFrame()
-        sv_merge = pd.DataFrame()
-
-        if unimed is not None and 'CPFDOBENEFICIARIO' in unimed.columns and 'FINAL' in unimed.columns:
-            unimed_merge = unimed[['CPFDOBENEFICIARIO', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_unimed',
-                                                                                            'FILIAL': 'frealizado_un'})
-        if va is not None and 'CPFTITULAR' in va.columns and 'FINAL' in va.columns:
-            va_merge = va[['CPFTITULAR', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_va',
-                                                                                'FILIAL': 'frealizado_va'})
-        if clin is not None and 'CPFDOBENEFICIARIO' in clin.columns and 'FINAL' in clin.columns:
-            clin_merge = clin[['CPFDOBENEFICIARIO', 'FINAL', 'FILIAL']].rename(columns={'FINAL': 'realizado_clin',
-                                                                                        'FILIAL': 'frealizado_cl'})
-        if sv is not None and 'CPFTITULAR' in sv.columns and 'VALOR' in sv.columns:
-            sv_merge = sv[['CPFTITULAR', 'VALOR', 'FILIAL']].rename(columns={'VALOR': 'realizado_sv',
-                                                                                'FILIAL': 'frealizado_sv'})
-
-        result_df = consolidated_df.copy()
-
-        if not unimed_merge.empty:
-            result_df = result_df.merge(unimed_merge,  left_on= 'CPFTITULAR', right_on='CPFDOBENEFICIARIO', how='left')
-        if not va_merge.empty:
-            result_df = result_df.merge(va_merge, on='CPFTITULAR', how='left')
-        if not clin_merge.empty:
-            result_df = result_df.merge(clin_merge, left_on= 'CPFTITULAR', right_on='CPFDOBENEFICIARIO', how='left')
-        if not sv_merge.empty:
-            result_df = result_df.merge(sv_merge, on='CPFTITULAR', how='left')
-
-        result_df = result_df.drop_duplicates(subset=['CPFTITULAR'], keep='first')
-        result_df.drop(columns=['CPFDOBENEFICIARIO_x', 'CPFDOBENEFICIARIO_y'], inplace=True)
-        
-        result_df.reset_index(drop=True, inplace=True)
-    
-    return result_df
-
-def merge_benefits(result_df, recorrente):
-    benefit_columns = ['CPF', 'VALE ALIMENTACAO', 'ASSISTENCIA MEDICA', 
-                       'SEGURO DE VIDA', 'ASSISTENCIA ODONTOLOGICA', 'FILIAL']
-    
-    columns_to_use = [col for col in benefit_columns if col in recorrente.columns]
-    
-    recorrente_subset = recorrente[columns_to_use]
-    
-    merged_df = result_df.merge(
-        recorrente_subset,
-        left_on='CPFTITULAR',
-        right_on='CPF',
-        how='left'
-    )
-    
-    merged_df.drop(columns=['CPF'], inplace=True)
-    
-    merged_df.rename(columns={
+def merge_recorrentes(df_main, df_sec):
+    df_sec = df_sec.rename(columns={
         'VALE ALIMENTACAO': 'previsto_va',
         'ASSISTENCIA MEDICA': 'previsto_unimed',
         'SEGURO DE VIDA': 'previsto_sv',
         'ASSISTENCIA ODONTOLOGICA': 'previsto_clin',
         'FILIAL': 'previsto_filial'
-    }, inplace=True)
-
-    merged_df = merged_df[['CPFTITULAR', 'previsto_filial', 'previsto_va', 'frealizado_va', 'realizado_va' ,
-                          'previsto_unimed', 'frealizado_un', 'realizado_unimed', 
-                          'previsto_clin', 'frealizado_cl', 'realizado_clin', 
-                          'previsto_sv', 'frealizado_sv', 'realizado_sv']]
+    })
     
-    benefit_columns = ['previsto_va', 'previsto_unimed', 'previsto_clin', 'previsto_sv']
-    for col in benefit_columns:
-        if col in merged_df.columns:
-            merged_df[col] = merged_df[col].apply(
-                lambda x: float(str(x).replace(',', '.')) if pd.notna(x) and x != '' else 0.0
-            )
+    df_merged = pd.merge(df_main, df_sec, left_on='CPF', right_on='CPF' , how='outer')
+    df_merged = df_merged[['CPF', 'previsto_filial', 'previsto_va', 'filial_realizada_va',  'realizado_va',
+                             'previsto_unimed', 'filial_realizada_unimed', 'realizado_unimed', 
+                             'previsto_clin', 'filial_realizada_clin',  'realizado_clin', 
+                             'previsto_sv', 'filial_realizada_sv', 'realizado_sv']]
     
-    filial_columns = ['previsto_filial', 'frealizado_va', 'frealizado_un', 'frealizado_cl', 'frealizado_sv']
-    for col in filial_columns:
-        if col in merged_df.columns:
-            merged_df[col] = merged_df[col].apply(
-                lambda x: str(x).split(' ')[0].split('-')[0].strip() if pd.notna(x) and x != '' else '0'
-            )
-            merged_df[col] = merged_df[col].apply(
-                lambda x: str(x).zfill(2) if pd.notna(x) else None
-            )
+    df_merged.fillna({
+            'filial_realizada_va': '00',
+            'filial_realizada_unimed': '00',
+            'filial_realizada_clin': '00',
+            'filial_realizada_sv': '00',
+            'previsto_filial': '00'
+        }, inplace=True)
 
-    return merged_df
+    return df_merged
 
-def process_report(beneficios_file, recorrentes_file, ednaldo=False, output_path=None, 
+def verificar_retorno(resultado):
+    # Se estiver vazio, é provavelmente um log (quando nenhuma planilha foi carregada)
+    if not resultado:
+        return False
+    
+    # Verifica se existem chaves específicas dos logs
+    if 'resumo' in resultado or 'erro_geral' in resultado:
+        return False
+    
+    # Pega o primeiro item do dicionário para verificar seu tipo
+    primeira_chave = next(iter(resultado))
+    primeiro_valor = resultado[primeira_chave]
+    
+    # Verificar se é um DataFrame do pandas
+    if hasattr(primeiro_valor, 'iloc') and hasattr(primeiro_valor, 'columns'):
+        return True
+    
+    # Se não for um DataFrame, é provavelmente um log
+    return False
+
+
+
+def process_report(beneficios_file, recorrentes_file, ednaldo=False, 
                   mes_analise=None, progress_callback=None):
+    """
+        Processa relatórios de benefícios e gera um relatório de análise consolidado.
+        
+        Esta função processa relatórios de benefícios de várias fontes (Unimed, VA, CLIN, SV)
+        e os combina com dados de benefícios recorrentes para criar uma análise abrangente.
+        
+        Parâmetros:
+        -----------
+        beneficios_file : str ou objeto tipo arquivo
+            Caminho para o arquivo Excel contendo dados de benefícios.
+        recorrentes_file : str ou objeto tipo arquivo
+            Caminho para o arquivo Excel contendo dados de benefícios recorrentes.
+        ednaldo : bool, padrão=False
+            Indica se deve processar no modo 'Ednaldo', que inclui uma planilha SV2 adicional.
+        mes_analise : str, opcional
+            Mês de análise no formato 'MM/AAAA'. Se None, o mês atual será usado.
+        progress_callback : callable, opcional
+            Uma função para chamar com atualizações de progresso. Recebe dois parâmetros:
+            - progress: int (0-100)
+            - message: str
+            
+        Retornos:
+        ---------
+        tuple
+            Se bem-sucedido, retorna (result_df, logs) onde:
+            - result_df: DataFrame pandas contendo os dados mesclados e processados
+            - logs: dicionário com informações de processamento para cada fonte de dados
+            
+            Se não for bem-sucedido, retorna (logs, mensagem_erro) onde:
+            - logs: dicionário com informações de processamento até o ponto de falha
+            - mensagem_erro: str explicando o erro
+        
+        Exemplo do dicionário de logs:
+        -----------------------------
+        >>> logs = {
+            'unimed': {
+                'status': 'Carregada com sucesso',
+                'nome_padronizado': 'UNIMED',
+                'tipo_planilha': 'UNIMED',
+                'linhas': 184,
+                'colunas': ['FILIAL', 'CCFORMATADO', 'CPFTITULAR', 'CPFBENEFICIARIO', 'VALOR', '406']
+            },
+            'VA': {
+                'status': 'Carregada com sucesso',
+                'nome_padronizado': 'VA',
+                'tipo_planilha': 'VA',
+                'linhas': 244,
+                'colunas': ['FILIAL', 'CCFORMATADO', 'CPFTITULAR', 'VALOR', '424']
+            },
+            'clin': {
+                'status': 'Carregada com sucesso',
+                'nome_padronizado': 'CLIN',
+                'tipo_planilha': 'CLIN',
+                'linhas': 250,
+                'colunas': ['FILIAL', 'CPFTITULAR', 'CPFBENEFICIARIO', 'CCFORMATADO', 'VALOR', '441', '442']
+            },
+            'sv': {
+                'status': 'Carregada com sucesso',
+                'nome_padronizado': 'SV',
+                'tipo_planilha': 'SV',
+                'linhas': 253,
+                'colunas': ['FILIAL', 'CCFORMATADO', 'CPFTITULAR', 'VALOR']
+            },
+            'sv2': {
+                'status': 'Carregada com sucesso',
+                'nome_padronizado': 'SV2',
+                'tipo_planilha': 'SV2',
+                'linhas': 9,
+                'colunas': ['FILIAL', 'CPFTITULAR', 'CCFORMATADO', 'VALOR']
+            },
+            'resumo': 'Todas as planilhas esperadas foram encontradas'
+        }
+    """    
+    
+
     def update_progress(progress, message=""):
         if progress_callback:
             progress_callback(progress, message)
     
     update_progress(0, "Carregando arquivos...")
     
-    dataframes = load_excel(beneficios_file)
+    # Carregar os dados dos benefícios realizados
+    dataframes = load_excel(beneficios_file, ednaldo)
     
     update_progress(20, "Arquivos carregados com sucesso")
     
-    columns_to_keep = analyze_dataframes(dataframes)
-    for name, columns in columns_to_keep.items():
-        if name in dataframes:
-            try:
-                dataframes[name] = dataframes[name][columns]
-            except KeyError as e:
-                error_msg = f"Erro ao filtrar colunas para {name}: {e}"
-                print(error_msg)
-                update_progress(0, error_msg)
+    if verificar_retorno(dataframes):
+        # Extrair CPFs únicos dos dataframes
+        cpfs_unicos = extract_unique_cpfs(dataframes)
+        
+        update_progress(40, "CPFs extraídos e processados")
+        
+        # Carregar dados de recorrentes (previstos)
+        recorrente_df = load_recorrentes(recorrentes_file, mes_analise)
+        
+        update_progress(60, "Dados de recorrentes processados")
+        
+        # Processar os dataframes
+        if ednaldo:
+            unimed, va, clin, sv, sv2 = process_full(dataframes, ednaldo=ednaldo)
+        else:
+            unimed, va, clin, sv = process_full(dataframes, ednaldo=ednaldo)
+            sv2 = None
+        
+        update_progress(80, "Dados processados, gerando relatório final")
+        
+        # Realizar o merge dos dataframes
+        result_df = merge_dataframes(cpfs_unicos, unimed, va, clin, sv, sv2, ednaldo)
+        
+        # Fazer o merge com os dados de recorrentes
+        result_df = merge_recorrentes(result_df, recorrente_df)
     
-    update_progress(40, "Colunas relevantes extraídas")
+        update_progress(100, "Relatório finalizado")
     
-    cpfs_unicos = extract_unique_cpfs(dataframes)
+        return result_df
     
-    recorrente_df, recorrentes_cpfs = load_recorrentes(recorrentes_file, mes_analise)
-    
-    update_progress(60, "CPFs extraídos e processados")
-    
-    if ednaldo:
-        unimed, va, clin, sv, sv2 = process_full(dataframes, ednaldo=ednaldo)
-    else:
-        unimed, va, clin, sv = process_full(dataframes, ednaldo=ednaldo)
-        sv2 = None
-    
-    consolidated_df = pd.DataFrame(list(set(recorrentes_cpfs + cpfs_unicos)), columns=['CPFTITULAR'])
-    
-    update_progress(80, "Dados processados, gerando relatório final")
-    
-    result_df = merge_dataframes(consolidated_df, unimed, va, clin, sv, sv2, ednaldo)
-    result_df = merge_benefits(result_df, recorrente_df)
-    
-    if output_path:
-        result_df.to_excel(output_path, index=False)
-        print(f"Relatório salvo em: {output_path}")
-    
-    update_progress(100, "Relatório finalizado")
-    
-    return result_df
+    else: 
+        return dataframes
