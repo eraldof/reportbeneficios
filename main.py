@@ -714,7 +714,7 @@ def process_report2(beneficios_file, bi_path, ednaldo=False, progress_callback=N
                                         'SINTETICO CC': str,
                                         'CONTA': str, 
                                         'VALOR': float}, 
-                                usecols= ['COD CENTRO CUSTO', 'SINTETICO', 'CONTA', 'VALOR'])
+                                usecols= ['COD CENTRO CUSTO', 'SINTETICO CC', 'CONTA', 'VALOR'])
         result_bi = result_bi.rename(columns={'COD CENTRO CUSTO': 'CC', 'SINTETICO CC': 'FILIAL', 'CONTA': 'BENEFICIO'})
         excluded_benefits = ['SUBSIDIO EDUCACAO', 'CURSOS E TREINAMENTOS', 'VALE TRANSPORTE']
         result_bi = result_bi[~result_bi['BENEFICIO'].isin(excluded_benefits)]
