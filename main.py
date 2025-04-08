@@ -511,10 +511,10 @@ def merge_recorrentes(df_main, df_sec):
     
     df_merged = pd.merge(df_main, df_sec, left_on='CPF', right_on='CPF' , how='outer')
     df_merged = df_merged[['CPF', 'previsto_filial', 
-                             'previsto_va', 'CC_formatado_va', 'filial_realizada_va',  'realizado_va',
-                             'previsto_unimed', 'filial_realizada_unimed', 'CC_formatado_unimed', 'realizado_unimed', 
-                             'previsto_clin', 'filial_realizada_clin', 'CC_formatado_clin', 'realizado_clin', 
-                             'previsto_sv', 'filial_realizada_sv', 'CC_formatado_sv', 'realizado_sv']]
+                             'previsto_va', 'CC_realizado_va', 'filial_realizada_va',  'realizado_va',
+                             'previsto_unimed', 'filial_realizada_unimed', 'CC_realizado_unimed', 'realizado_unimed', 
+                             'previsto_clin', 'filial_realizada_clin', 'CC_realizado_clin', 'realizado_clin', 
+                             'previsto_sv', 'filial_realizada_sv', 'CC_realizado_sv', 'realizado_sv']]
     
     df_merged.fillna({
             'filial_realizada_va': '00',
@@ -711,11 +711,11 @@ def process_report2(beneficios_file, bi_path, ednaldo=False, progress_callback=N
         update_progress(100, "Relatório finalizado")
         result_bi = pd.read_excel(bi_path, 
                                   dtype= {'COD CENTRO CUSTO': str, 
-                                        'SINTETICO': str,
+                                        'SINTETICO CC': str,
                                         'CONTA': str, 
                                         'VALOR': float}, 
                                 usecols= ['COD CENTRO CUSTO', 'SINTETICO', 'CONTA', 'VALOR'])
-        result_bi = result_bi.rename(columns={'COD CENTRO CUSTO': 'CC', 'SINTETICO': 'FILIAL', 'CONTA': 'BENEFICIO'})
+        result_bi = result_bi.rename(columns={'COD CENTRO CUSTO': 'CC', 'SINTETICO CC': 'FILIAL', 'CONTA': 'BENEFICIO'})
         excluded_benefits = ['SUBSIDIO EDUCACAO', 'CURSOS E TREINAMENTOS', 'VALE TRANSPORTE']
         result_bi = result_bi[~result_bi['BENEFICIO'].isin(excluded_benefits)]
         filial_mapping = {
