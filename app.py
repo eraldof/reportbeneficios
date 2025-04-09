@@ -4,8 +4,10 @@ from datetime import datetime
 import io
 import time
 from streamlit.errors import NoSessionContext
+from main import process_report, process_report2, verificar_retorno
+from shared_components import render_shared_sidebar, get_files_and_options
+from utils import display_comparison_panel
 
-from main import process_report, verificar_retorno
 st.set_page_config(
     page_title="Processador de Relatórios de Benefícios",
     page_icon="📊",
@@ -113,38 +115,75 @@ def calculate_totals(result_df):
     
     return totais
 
-def process_filial_comparativo(result_df):
-    # Criar uma cópia explícita para evitar warnings
+
+def process_filial_comparativo(result_df, result_bi=None, selected_benefit=None):
     df = result_df.copy()
-    df.loc[:, 'previsto_filial'] = df['previsto_filial'].fillna('Não Informado')
-    
-    benefit_cols = [
-        ('va', 'previsto_va', 'realizado_va'),
-        ('unimed', 'previsto_unimed', 'realizado_unimed'),
-        ('clin', 'previsto_clin', 'realizado_clin'),
-        ('sv', 'previsto_sv', 'realizado_sv')
-    ]
-    
+    df.loc[:, 'previsto_filial'] = df['previsto_filial'].fillna('00')
+
+    benefit_mapping = {
+        "Vale Alimentação": ('va', 'previsto_va', 'realizado_va', 'filial_realizada_va', 'VA'),
+        "Assistência Médica": ('unimed', 'previsto_unimed', 'realizado_unimed', 'filial_realizada_unimed', 'UNIMED'),
+        "Assistência Odontológica": ('clin', 'previsto_clin', 'realizado_clin', 'filial_realizada_clin', 'CLIN'),
+        "Seguro de Vida": ('sv', 'previsto_sv', 'realizado_sv', 'filial_realizada_sv', 'SV')
+    }
+
+    # Get the columns for the selected benefit
+    benefit_type, prev_col, real_col, filial_real_col, bi_benefit_name = benefit_mapping[selected_benefit]
+
     comparativo_filiais = []
+
+    # Get all unique filiais to analyze from previsto in result_df
+    all_filiais = set(df['previsto_filial'].unique())
     
-    for filial in df['previsto_filial'].unique():
-        filial_df = df[df['previsto_filial'] == filial]
+    # Also add filiais from filial_realizada in result_df
+    all_filiais.update(df[filial_real_col].unique())
+    
+    # Add filiais from result_bi if available
+    if result_bi is not None:
+        filtered_bi = result_bi[result_bi['BENEFICIO'] == bi_benefit_name]
+        all_filiais.update(filtered_bi['FILIAL'].unique())
+    
+    all_filiais = sorted(list(all_filiais))
+
+    for filial in all_filiais:
+        # Sum previsto values where previsto_filial matches the current filial
+        filial_previsto_df = df[df['previsto_filial'] == filial]
+        previsto_sum = filial_previsto_df[prev_col].sum()
         
-        total_previsto = sum(filial_df[prev_col].sum() for _, prev_col, _ in benefit_cols)
-        total_realizado = sum(filial_df[real_col].sum() for _, _, real_col in benefit_cols)
+        # Count collaborators with budget in this filial for this benefit
+        # Filter where previsto value is not 0 or None
+        previsto_count = filial_previsto_df[filial_previsto_df[prev_col] > 0].shape[0]
         
-        diferenca = total_realizado - total_previsto
-        variacao_pct = (diferenca / total_previsto * 100) if total_previsto != 0 else 0
+        # Get realized values from BI if available, otherwise use result_df's realizado values
+        if result_bi is not None:
+            realizado_sum = result_bi[(result_bi['FILIAL'] == filial) & 
+                                     (result_bi['BENEFICIO'] == bi_benefit_name)]['VALOR'].sum()
+        else:
+            # Fallback to the original calculation if BI data isn't available
+            filial_realizado_df = df[df[filial_real_col] == filial]
+            realizado_sum = filial_realizado_df[real_col].sum()
+        
+        # Count collaborators with realized benefits in this filial
+        filial_realizado_df = df[df[filial_real_col] == filial]
+        realizado_count = filial_realizado_df[filial_realizado_df[real_col] > 0].shape[0]
+        
+        # Calculate difference and percentage
+        diferenca = realizado_sum - previsto_sum
+        variacao_pct = (diferenca / previsto_sum * 100) if previsto_sum != 0 else 0
         
         comparativo_filiais.append({
             'Filial': filial,
-            'Previsto': total_previsto,
-            'Realizado': total_realizado,
+            'Orçado': previsto_sum,
+            'Qtd. Orçado': previsto_count,
+            'Realizado': realizado_sum,
+            'Qtd. Realizado': realizado_count,
             'Diferença': diferenca,
-            'Variação (%)': variacao_pct
+            'Variação (%)': variacao_pct,
+            'Justificativa': None
         })
-    
+
     return pd.DataFrame(comparativo_filiais).sort_values(by='Filial')
+
 
 def process_matriz_transferencia(result_df, beneficio):
     benefit_map = {
@@ -199,59 +238,7 @@ def load_colaboradores_file(file):
         st.sidebar.error(f"Erro ao carregar arquivo de colaboradores: {str(e)}")
         return None
 
-
-# UI components
-def render_sidebar():
-    st.header("Upload de Arquivos")
-    
-    st.subheader("Carregar arquivo de benefícios")
-    beneficios_file = st.file_uploader(
-        type=["xlsx"],
-        help="Arquivo Excel contendo planilhas com dados de benefícios",
-        label_visibility="collapsed",
-        label="Carregar arquivo de beneficios"
-    )
-
-    st.subheader("Carregar arquivo com o orçamento")
-    recorrentes_file = st.file_uploader(
-        label="Carregar arquivo com o orçamento",
-        label_visibility="collapsed",
-        type=["xlsx"],
-        help="Arquivo Excel contendo dados de recorrentes"
-    )
-    
-    st.subheader("Carregar arquivo de colaboradores (opcional)")
-    colaboradores_file = st.file_uploader(
-        label="Carregar arquivo com nomes dos colaboradores",
-        label_visibility="collapsed",
-        type=["xlsx", "csv"],
-        help="Arquivo contendo CPF e NOME dos colaboradores (opcional)"
-    )
-
-    st.subheader("Opções de Processamento")
-
-    month_mapping = {
-        'Janeiro': '01', 'Fevereiro': '02', 'Março': '03', 'Abril': '04', 
-        'Maio': '05', 'Junho': '06', 'Julho': '07', 'Agosto': '08', 
-        'Setembro': '09', 'Outubro': '10', 'Novembro': '11', 'Dezembro': '12'
-    }
-    
-    mes_atual = int(datetime.now().strftime('%m'))
-    mes_default = (mes_atual - 1) % 12 or 12
-    month_names = list(month_mapping.keys())
-    
-    selected_month = st.selectbox(
-        "Selecione o mês de análise:",
-        options=month_names,
-        index=mes_default-1
-    )
-
-    ednaldo_mode = st.checkbox("Usar modo Ednaldo", value=False, 
-                              help="Ativa o processamento com regras específicas do modo Ednaldo")
-
-    process_button = st.button("Processar Dados", type="primary", use_container_width=True)
-    
-    return beneficios_file, recorrentes_file, colaboradores_file, selected_month, month_mapping, ednaldo_mode, process_button
+# Removed redundant render_sidebar function as we're using render_shared_sidebar from shared_components
 
 def render_benefit_summary(result_df):
     st.subheader("Resumo dos Benefícios")
@@ -475,18 +462,18 @@ def process_data(beneficios_file, recorrentes_file, selected_month, month_mappin
         
         if not is_error_log:
             # Only proceed with DataFrame operations if result is not an error log
-            if st.session_state.colaboradores_df is not None:
+            colaboradores_df = st.session_state.get('colaboradores_df')
+            if colaboradores_df is not None:
                 progress_callback(95, "Adicionando nomes dos colaboradores...")
                 
                 # Clean and standardize the colaboradores dataframe
-                colaboradores_clean = st.session_state.colaboradores_df.copy()
+                colaboradores_clean = colaboradores_df.copy()
                 
                 # Check for duplicates in CPF and handle them
                 duplicated_cpfs = colaboradores_clean['CPF'].duplicated()
                 if duplicated_cpfs.any():
                     num_duplicates = duplicated_cpfs.sum()
                     colaboradores_clean = colaboradores_clean.drop_duplicates(subset=['CPF'], keep='first')
-                
                 
                 colaboradores_clean['CPF'] = colaboradores_clean['CPF'].astype(str)
                 colaboradores_clean['CPF'] = colaboradores_clean['CPF'].str.replace('[^0-9]', '', regex=True).str.zfill(11)
@@ -505,22 +492,32 @@ def process_data(beneficios_file, recorrentes_file, selected_month, month_mappin
         raise e
 
 def render_analysis_tab(result_df):
-    detail_tab1, detail_tab2, detail_tab3 = st.tabs([
+    detail_tab1, detail_tab2 = st.tabs([
         "Comparativo Orçado vs Realizado", 
-        "Transferências Entre Filiais", 
-        "Detalhes por Benefício"
+        "Transferências Entre Filiais"
     ])
     
     with detail_tab1:
         st.write("Comparativo de valores orçados vs realizados por filial:")
         
-        comparativo_df = process_filial_comparativo(result_df)
+        # Add dropdown for benefit selection
+        selected_benefit = st.selectbox(
+            "Selecione o benefício para filtrar o comparativo:",
+            ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
+            key="comparativo_benefit_filter"
+        )
+        
+        # Use result_bi from session state if available
+        result_bi = st.session_state.get('result_bi')
+        comparativo_df = process_filial_comparativo(result_df, result_bi, selected_benefit)
         
         format_dict = {
-            'Previsto': format_currency, 
+            'Orçado': format_currency, 
             'Realizado': format_currency, 
             'Diferença': format_currency,
-            'Variação (%)': '{:.2f}%'.format
+            'Variação (%)': '{:.2f}%'.format,
+            'Qtd. Orçado': '{:d}'.format,
+            'Qtd. Realizado': '{:d}'.format
         }
         
         highlight_map = {
@@ -529,7 +526,38 @@ def render_analysis_tab(result_df):
         }
         
         styled_comparativo = create_styled_dataframe(comparativo_df, format_dict, highlight_map)
-        st.dataframe(styled_comparativo, use_container_width=True)
+        
+        # Configure columns for the data_editor with currency formatting
+        column_config = {
+            "Orçado": st.column_config.NumberColumn(
+                "Orçado",
+                format="R$ %.2f"
+            ),
+            "Realizado": st.column_config.NumberColumn(
+                "Realizado",
+                format="R$ %.2f"
+            ),
+            "Diferença": st.column_config.NumberColumn(
+                "Diferença",
+                format="R$ %.2f"
+            ),
+            "Variação (%)": st.column_config.NumberColumn(
+                "Variação (%)",
+                format="%.2f%%"
+            ),
+            "Justificativa": st.column_config.TextColumn(
+                "Justificativa",
+                help="Adicione uma justificativa para variações significativas",
+                width="large"
+            )
+        }
+        
+        # Use data_editor with the column configuration
+        st.data_editor(
+            comparativo_df,
+            column_config=column_config,
+            use_container_width=True
+        )
         
     with detail_tab2:
         st.write("Análise de transferências entre filiais (Orçado vs Realizado):")
@@ -580,27 +608,10 @@ def render_analysis_tab(result_df):
             if filial_destino == 'não orçado':
                 filial_destino = '00'
         
-
         render_cpf_detail(
             df_valido, filial_origem, filial_destino, 
             previsto_col, frealizado_col, realizado_col
         )
-        
-    with detail_tab3:
-        st.write("Detalhes por tipo de benefício:")
-        
-        benefit_tabs = st.tabs(["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"])
-        
-        benefit_details = [
-            ("Vale Alimentação", "previsto_va", "realizado_va", "filial_realizada_va"),
-            ("Assistência Médica", "previsto_unimed", "realizado_unimed", "filial_realizada_unimed"),
-            ("Assistência Odontológica", "previsto_clin", "realizado_clin", "filial_realizada_clin"),
-            ("Seguro de Vida", "previsto_sv", "realizado_sv", "filial_realizada_sv")
-        ]
-        
-        for i, (name, prev, real, filial) in enumerate(benefit_details):
-            with benefit_tabs[i]:
-                render_benefit_details(result_df, name, prev, real, filial)
 
 def categorize_employees_by_branch(result_df, selected_filial):
     """
@@ -728,6 +739,31 @@ def render_employee_table(df, prev_col, real_col, dest_filial_col=None):
     with col2:
         st.metric("Total Realizado", format_currency(total_realizado))
 
+# New function to display employee categories - replaces redundant code
+def render_employee_category(category_data, benefit_map, category_title, category_description):
+    """
+    Renders a set of tabs for a specific employee category with data for each benefit type.
+    
+    Args:
+        category_data (dict): Dictionary with benefit names as keys and dataframes as values
+        benefit_map (dict): Mapping of benefit names to column names
+        category_title (str): Title to display for this category
+        category_description (str): Description text explaining this category
+    """
+    st.subheader(category_title)
+    st.markdown(category_description)
+    
+    tabs = st.tabs(list(benefit_map.keys()))
+    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
+        with tabs[i]:
+            prev_col, real_col, filial_col = cols
+            
+            # Last parameter is only needed for transfers
+            if 'Transferidos' in category_title:
+                render_employee_table(category_data[benefit_name], prev_col, real_col, filial_col)
+            else:
+                render_employee_table(category_data[benefit_name], prev_col, real_col)
+
 def render_summary_tab(result_df):
     """
     Render the Summary Report tab with branch selection and employee categories.
@@ -766,39 +802,35 @@ def render_summary_tab(result_df):
         'Seguro de Vida': ('previsto_sv', 'realizado_sv', 'filial_realizada_sv')
     }
     
-    # 1. Terminated Employees
-    st.subheader(f"1. Colaboradores Desligados - Filial {selected_filial}")
-    st.markdown("Colaboradores que foram orçados na filial selecionada mas não realizados (filial realizada = 00)")
+    # Render each category using the new function
+    render_employee_category(
+        terminated, 
+        benefit_map, 
+        f"1. Colaboradores Desligados - Filial {selected_filial}",
+        "Colaboradores que foram orçados na filial selecionada mas não realizados (filial realizada = 00)"
+    )
     
-    term_tabs = st.tabs(list(benefit_map.keys()))
-    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
-        with term_tabs[i]:
-            prev_col, real_col, _ = cols
-            render_employee_table(terminated[benefit_name], prev_col, real_col)
+    render_employee_category(
+        new_hires, 
+        benefit_map, 
+        f"2. Colaboradores Contratados - Filial {selected_filial}",
+        "Colaboradores que não foram orçados (filial orçada = 00) mas foram realizados na filial selecionada"
+    )
     
-    # 2. New Hires
-    st.subheader(f"2. Colaboradores Contratados - Filial {selected_filial}")
-    st.markdown("Colaboradores que não foram orçados (filial orçada = 00) mas foram realizados na filial selecionada")
-    
-    new_tabs = st.tabs(list(benefit_map.keys()))
-    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
-        with new_tabs[i]:
-            prev_col, real_col, _ = cols
-            render_employee_table(new_hires[benefit_name], prev_col, real_col)
-    
-    # 3. Transferred Employees
-    st.subheader(f"3. Colaboradores Transferidos - Filial {selected_filial}")
-    st.markdown("Colaboradores que foram orçados na filial selecionada mas realizados em outra filial")
-    
-    trans_tabs = st.tabs(list(benefit_map.keys()))
-    for i, (benefit_name, cols) in enumerate(benefit_map.items()):
-        with trans_tabs[i]:
-            prev_col, real_col, filial_col = cols
-            render_employee_table(transferred[benefit_name], prev_col, real_col, filial_col)
+    render_employee_category(
+        transferred, 
+        benefit_map, 
+        f"3. Colaboradores Transferidos - Filial {selected_filial}",
+        "Colaboradores que foram orçados na filial selecionada mas realizados em outra filial"
+    )
+
+def display_comparison_results(result_df, result_bi):
+    # This is a wrapper around the utility function
+    display_comparison_panel(result_df, result_bi)
 
 def main():
     # Initialize session state variables
-    for key in ['processing_completed_time', 'processing_started', 'result_df', 'colaboradores_df', 'is_error_log']:
+    for key in ['processing_completed_time', 'processing_started', 'result_df', 'is_error_log', 'detalhado_df', 'result_bi']:
         if key not in st.session_state:
             st.session_state[key] = None if key != 'processing_started' else False
     
@@ -815,9 +847,26 @@ def main():
     Carregue os arquivos necessários e configure as opções para gerar o relatório final.
     """)
     
-    # Sidebar for file upload and configuration
+    # Usar o sidebar compartilhado
     with st.sidebar:
-        beneficios_file, recorrentes_file, colaboradores_file, selected_month, month_mapping, ednaldo_mode, process_button = render_sidebar()
+        files_and_options = render_shared_sidebar()
+        
+        beneficios_file = files_and_options['beneficios_file']
+        recorrentes_file = files_and_options['recorrentes_file']
+        selected_month = files_and_options['selected_month']
+        month_mapping = files_and_options['month_mapping']
+        ednaldo_mode = files_and_options['ednaldo_mode']
+        bi_file = files_and_options['bi_file']
+
+
+        
+        # Botão de processamento
+        process_button = st.button(
+            "Processar Relatório de Benefícios", 
+            type="primary", 
+            use_container_width=True,
+            disabled=(beneficios_file is None or recorrentes_file is None)
+        )
     
     result_df = st.session_state.result_df
     is_error_log = st.session_state.is_error_log
@@ -827,18 +876,17 @@ def main():
     status_container = st.empty()
     success_container = st.empty()
     
-    # Load colaboradores file if provided
-    if colaboradores_file is not None and st.session_state.colaboradores_df is None:
-        st.session_state.colaboradores_df = load_colaboradores_file(colaboradores_file)
-    
     # Process data when button is clicked
     if process_button:
         if beneficios_file is None or recorrentes_file is None:
-            st.error("Por favor, carregue os dois arquivos necessários.")
+            st.error("Por favor, carregue os arquivos de benefícios e orçamento.")
         else:
             try:
+                # Reset all relevant session state variables
                 st.session_state.result_df = None
                 st.session_state.is_error_log = None
+                st.session_state.detalhado_df = None
+                st.session_state.result_bi = None
                 st.session_state.processing_started = True
                 
                 with st.spinner("Processando dados..."):
@@ -853,6 +901,7 @@ def main():
                         except NoSessionContext:
                             pass
                     
+                    # Process main report data
                     result, is_error_log = process_data(
                         beneficios_file, 
                         recorrentes_file, 
@@ -861,12 +910,30 @@ def main():
                         ednaldo_mode, 
                         update_progress
                     )
+                    
+                    # Store in session state right after processing
+                    st.session_state.result_df = result
+                    st.session_state.is_error_log = is_error_log
+                    
+                    # Only process BI data if main report was successful and BI file is provided
+                    if not is_error_log and bi_file is not None:
+                        try:
+                            update_progress(90, "Processando dados para comparação com BI...")
+                            detalhado_df, result_bi = process_report2(
+                                beneficios_file,
+                                bi_file,
+                                ednaldo_mode
+                            )
+                            st.session_state.detalhado_df = detalhado_df
+                            st.session_state.result_bi = result_bi
+                        except Exception as bi_error:
+                            st.warning(f"Não foi possível processar a comparação com BI: {str(bi_error)}")
                 
-                st.session_state.result_df = result
-                st.session_state.is_error_log = is_error_log
                 st.session_state.processing_completed_time = time.time()
                 if not is_error_log:
                     success_container.success(f"Processamento concluído! {len(result)} registros processados.")
+                
+                # Use rerun outside the spinner to avoid UI conflicts
                 st.rerun()
                 
             except Exception as e:
@@ -894,7 +961,7 @@ def main():
             # Display the regular report
             st.header("Resultados")
             
-            tab1, tab2, tab3 = st.tabs(["Visão Geral", "Análise Detalhada", "Resumo relatório"])
+            tab1, tab2, tab3, tab4 = st.tabs(["Visão Geral", "Análise Detalhada", "Resumo relatório", "Comparação BI vs Relatório"])
             
             with tab1:
                 render_benefit_summary(result_df)
@@ -910,6 +977,12 @@ def main():
                 st.subheader("Resumo por Filial")
                 render_summary_tab(result_df)
             
+            with tab4:
+                if st.session_state.detalhado_df is not None and st.session_state.result_bi is not None:
+                    display_comparison_panel(st.session_state.detalhado_df, st.session_state.result_bi)
+                else:
+                    st.info("Dados para comparação com BI não disponíveis. Certifique-se de carregar o arquivo de BI e processar os dados.")
+
             # Add download button
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
