@@ -169,7 +169,7 @@ def process_filial_comparativo(result_df, result_bi=None, selected_benefit=None)
         
         # Calculate difference and percentage
         diferenca = realizado_sum - previsto_sum
-        variacao_pct = (diferenca / previsto_sum * 100) if previsto_sum != 0 else 0
+        variacao_pct = (realizado_sum / previsto_sum * 100) if previsto_sum != 0 else 0
         
         comparativo_filiais.append({
             'Filial': filial,
@@ -177,8 +177,8 @@ def process_filial_comparativo(result_df, result_bi=None, selected_benefit=None)
             'Qtd. Orçado': previsto_count,
             'Realizado': realizado_sum,
             'Qtd. Realizado': realizado_count,
-            'Diferença': diferenca,
             'Variação (%)': variacao_pct,
+            'Diferença': diferenca,
             'Justificativa': None
         })
 
