@@ -41,6 +41,36 @@ A aplicação processa e analisa quatro tipos principais de benefícios:
 - **Assistência Odontológica**
 - **Seguro de Vida**
 
+## Instalação e Execução
+
+### Pré-requisitos
+- Python 3.7 ou superior
+- Pip (gerenciador de pacotes Python)
+
+### Passos para instalação
+1. Clone ou baixe este repositório
+2. Navegue até a pasta do projeto
+3. Instale as dependências:
+   ```
+   pip install -r requirements.txt
+   ```
+4. Execute a aplicação:
+   ```
+   streamlit run app.py
+   ```
+
+## Uso Básico
+
+1. Acesse a aplicação pelo navegador (por padrão: http://localhost:8501)
+2. Carregue os arquivos necessários no painel lateral:
+   - Arquivo de benefícios (Excel)
+   - Arquivo de orçamento (Excel)
+   - Arquivo BI (opcional)
+   - Arquivo de colaboradores (opcional)
+3. Selecione o mês de análise
+4. Clique em "Processar Relatório de Benefícios"
+5. Navegue pelas diferentes abas para análise dos resultados
+
 ## Tecnologias Utilizadas
 
 ### Backend
@@ -60,8 +90,7 @@ A aplicação processa e analisa quatro tipos principais de benefícios:
 - **Excel Engine**: Processamento de arquivos XLSX
 
 ## Estrutura do Projeto
-
-```
+````
 report/
 ├── app.py                  # Ponto de entrada principal da aplicação
 ├── main.py                 # Funções centrais de processamento
