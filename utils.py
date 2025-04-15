@@ -16,6 +16,73 @@ benefit_names = {
     "SV": "Seguro de Vida"
 }
 
+def format_currency(value):
+    """
+    Format a value as Brazilian currency (R$).
+    Handles numeric values, strings, None and NaN.
+    """
+    if pd.isna(value) or value is None:
+        return "R$ 0,00"
+    
+    try:
+        # Try to convert to float if it's not already a number
+        if not isinstance(value, (int, float)):
+            value = float(value)
+        
+        # Format with Brazilian currency conventions
+        return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    except (ValueError, TypeError):
+        # If conversion fails, return the original value
+        return str(value)
+
+def highlight_values(val, thresholds, color_schemes):
+    """Generic highlighting function for dataframe values"""
+    if not isinstance(val, (int, float)):
+        return ''
+    
+    for threshold_set, color_scheme in zip(thresholds, color_schemes):
+        min_val, max_val = threshold_set
+        if (min_val is None or val > min_val) and (max_val is None or val <= max_val):
+            bg_color, text_color, font_weight = color_scheme
+            return f'background-color: {bg_color}; color: {text_color}; font-weight: {font_weight}'
+    return ''
+
+def highlight_diff(val):
+    thresholds = [(0, None), (None, 0)]
+    color_schemes = [
+        ('rgba(255, 0, 0, 0.1)', 'darkred', 'bold'),
+        ('rgba(0, 128, 0, 0.1)', 'darkgreen', 'bold')
+    ]
+    return highlight_values(val, thresholds, color_schemes)
+
+def highlight_percent(val):
+    thresholds = [(10, None), (5, 10), (None, -10), (-10, -5)]
+    color_schemes = [
+        ('rgba(255, 0, 0, 0.2)', 'darkred', 'bold'),
+        ('rgba(255, 165, 0, 0.2)', 'darkorange', 'normal'),
+        ('rgba(0, 128, 0, 0.2)', 'darkgreen', 'bold'),
+        ('rgba(144, 238, 144, 0.2)', 'green', 'normal')
+    ]
+    return highlight_values(val, thresholds, color_schemes)
+
+def highlight_transfers(val):
+    thresholds = [(1000, None), (100, 1000), (0.01, 100)]
+    color_schemes = [
+        ('rgba(65, 105, 225, 0.3)', 'darkblue', 'bold'),
+        ('rgba(65, 105, 225, 0.2)', 'darkblue', 'normal'),
+        ('rgba(65, 105, 225, 0.1)', 'darkblue', 'normal')
+    ]
+    return highlight_values(val, thresholds, color_schemes)
+
+def create_styled_dataframe(df, format_dict, highlight_map=None):
+    styled_df = df.style.format(format_dict)
+    
+    if highlight_map:
+        for subset, highlight_func in highlight_map.items():
+            styled_df = styled_df.map(highlight_func, subset=subset)
+    
+    return styled_df
+
 def process_data(beneficios_file, bi_file, ednaldo_mode, progress_callback):
     try:
         from main import process_report2

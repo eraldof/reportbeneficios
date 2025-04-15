@@ -4,241 +4,24 @@ from datetime import datetime
 import io
 import time
 from streamlit.errors import NoSessionContext
-from main import process_report, process_report2, verificar_retorno
-from shared_components import render_shared_sidebar, get_files_and_options
-from utils import display_comparison_panel
+import tabulate
+from main import process_report, process_report2
+
+from posprocessing import (calculate_totals, process_matriz_transferencia, 
+                            process_filial_comparativo)
+
+from utils import (format_currency, highlight_diff, highlight_percent, 
+                   highlight_transfers, display_comparison_panel, 
+                   create_styled_dataframe)
+
+from shared_components import render_shared_sidebar
+
 
 st.set_page_config(
     page_title="Processador de Relatórios de Benefícios",
     page_icon="📊",
     layout="centered"
 )
-
-# Utility functions
-def format_currency(value):
-    """
-    Format a value as Brazilian currency (R$).
-    Handles numeric values, strings, None and NaN.
-    """
-    if pd.isna(value) or value is None:
-        return "R$ 0,00"
-    
-    try:
-        # Try to convert to float if it's not already a number
-        if not isinstance(value, (int, float)):
-            value = float(value)
-        
-        # Format with Brazilian currency conventions
-        return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-    except (ValueError, TypeError):
-        # If conversion fails, return the original value
-        return str(value)
-
-def highlight_values(val, thresholds, color_schemes):
-    """Generic highlighting function for dataframe values"""
-    if not isinstance(val, (int, float)):
-        return ''
-    
-    for threshold_set, color_scheme in zip(thresholds, color_schemes):
-        min_val, max_val = threshold_set
-        if (min_val is None or val > min_val) and (max_val is None or val <= max_val):
-            bg_color, text_color, font_weight = color_scheme
-            return f'background-color: {bg_color}; color: {text_color}; font-weight: {font_weight}'
-    return ''
-
-def highlight_diff(val):
-    thresholds = [(0, None), (None, 0)]
-    color_schemes = [
-        ('rgba(255, 0, 0, 0.1)', 'darkred', 'bold'),
-        ('rgba(0, 128, 0, 0.1)', 'darkgreen', 'bold')
-    ]
-    return highlight_values(val, thresholds, color_schemes)
-
-def highlight_percent(val):
-    thresholds = [(10, None), (5, 10), (None, -10), (-10, -5)]
-    color_schemes = [
-        ('rgba(255, 0, 0, 0.2)', 'darkred', 'bold'),
-        ('rgba(255, 165, 0, 0.2)', 'darkorange', 'normal'),
-        ('rgba(0, 128, 0, 0.2)', 'darkgreen', 'bold'),
-        ('rgba(144, 238, 144, 0.2)', 'green', 'normal')
-    ]
-    return highlight_values(val, thresholds, color_schemes)
-
-def highlight_transfers(val):
-    thresholds = [(1000, None), (100, 1000), (0.01, 100)]
-    color_schemes = [
-        ('rgba(65, 105, 225, 0.3)', 'darkblue', 'bold'),
-        ('rgba(65, 105, 225, 0.2)', 'darkblue', 'normal'),
-        ('rgba(65, 105, 225, 0.1)', 'darkblue', 'normal')
-    ]
-    return highlight_values(val, thresholds, color_schemes)
-
-def create_styled_dataframe(df, format_dict, highlight_map=None):
-    styled_df = df.style.format(format_dict)
-    
-    if highlight_map:
-        for subset, highlight_func in highlight_map.items():
-            styled_df = styled_df.map(highlight_func, subset=subset)
-    
-    return styled_df
-
-# Data processing functions
-def calculate_totals(result_df):
-    benefit_types = {
-        'Vale Alimentação': ('previsto_va', 'realizado_va'),
-        'Assistência Médica': ('previsto_unimed', 'realizado_unimed'),
-        'Assistência Odontológica': ('previsto_clin', 'realizado_clin'),
-        'Seguro de Vida': ('previsto_sv', 'realizado_sv')
-    }
-    
-    totais = {}
-    prev_cols = []
-    real_cols = []
-    
-    for benefit, (prev_col, real_col) in benefit_types.items():
-        prev_cols.append(prev_col)
-        real_cols.append(real_col)
-        
-        prev_sum = result_df[prev_col].sum()
-        real_sum = result_df[real_col].sum()
-        
-        totais[benefit] = {
-            'Previsto': prev_sum,
-            'Realizado': real_sum,
-            'Diferença': real_sum - prev_sum
-        }
-    totais['Total Geral'] = {
-        'Previsto': result_df[prev_cols].sum().sum(),
-        'Realizado': result_df[real_cols].sum().sum(),
-        'Diferença': result_df[real_cols].sum().sum() - result_df[prev_cols].sum().sum()
-    }
-    
-    return totais
-
-
-def process_filial_comparativo(result_df, result_bi=None, selected_benefit=None):
-    df = result_df.copy()
-    df.loc[:, 'previsto_filial'] = df['previsto_filial'].fillna('00')
-
-    benefit_mapping = {
-        "Vale Alimentação": ('va', 'previsto_va', 'realizado_va', 'filial_realizada_va', 'VA'),
-        "Assistência Médica": ('unimed', 'previsto_unimed', 'realizado_unimed', 'filial_realizada_unimed', 'UNIMED'),
-        "Assistência Odontológica": ('clin', 'previsto_clin', 'realizado_clin', 'filial_realizada_clin', 'CLIN'),
-        "Seguro de Vida": ('sv', 'previsto_sv', 'realizado_sv', 'filial_realizada_sv', 'SV')
-    }
-
-    # Get the columns for the selected benefit
-    benefit_type, prev_col, real_col, filial_real_col, bi_benefit_name = benefit_mapping[selected_benefit]
-
-    comparativo_filiais = []
-
-    # Get all unique filiais to analyze from previsto in result_df
-    all_filiais = set(df['previsto_filial'].unique())
-    
-    # Also add filiais from filial_realizada in result_df
-    all_filiais.update(df[filial_real_col].unique())
-    
-    # Add filiais from result_bi if available
-    if result_bi is not None:
-        filtered_bi = result_bi[result_bi['BENEFICIO'] == bi_benefit_name]
-        all_filiais.update(filtered_bi['FILIAL'].unique())
-    
-    all_filiais = sorted(list(all_filiais))
-
-    for filial in all_filiais:
-        # Sum previsto values where previsto_filial matches the current filial
-        filial_previsto_df = df[df['previsto_filial'] == filial]
-        previsto_sum = filial_previsto_df[prev_col].sum()
-        
-        # Count collaborators with budget in this filial for this benefit
-        # Filter where previsto value is not 0 or None
-        previsto_count = filial_previsto_df[filial_previsto_df[prev_col] > 0].shape[0]
-        
-        # Get realized values from BI if available, otherwise use result_df's realizado values
-        if result_bi is not None:
-            realizado_sum = result_bi[(result_bi['FILIAL'] == filial) & 
-                                     (result_bi['BENEFICIO'] == bi_benefit_name)]['VALOR'].sum()
-        else:
-            # Fallback to the original calculation if BI data isn't available
-            filial_realizado_df = df[df[filial_real_col] == filial]
-            realizado_sum = filial_realizado_df[real_col].sum()
-        
-        # Count collaborators with realized benefits in this filial
-        filial_realizado_df = df[df[filial_real_col] == filial]
-        realizado_count = filial_realizado_df[filial_realizado_df[real_col] > 0].shape[0]
-        
-        # Calculate difference and percentage
-        diferenca = realizado_sum - previsto_sum
-        variacao_pct = (realizado_sum / previsto_sum * 100) if previsto_sum != 0 else 0
-        
-        comparativo_filiais.append({
-            'Filial': filial,
-            'Orçado': previsto_sum,
-            'Qtd. Orçado': previsto_count,
-            'Realizado': realizado_sum,
-            'Qtd. Realizado': realizado_count,
-            'Variação (%)': variacao_pct,
-            'Diferença': diferenca,
-            'Justificativa': None
-        })
-
-    return pd.DataFrame(comparativo_filiais).sort_values(by='Filial')
-
-
-def process_matriz_transferencia(result_df, beneficio):
-    benefit_map = {
-        "Vale Alimentação": ("previsto_va", "filial_realizada_va", "realizado_va"),
-        "Assistência Médica": ("previsto_unimed", "filial_realizada_unimed", "realizado_unimed"),
-        "Assistência Odontológica": ("previsto_clin", "filial_realizada_clin", "realizado_clin"),
-        "Seguro de Vida": ("previsto_sv", "filial_realizada_sv", "realizado_sv")
-    }
-    
-    previsto_col, frealizado_col, realizado_col = benefit_map[beneficio]
-    
-    df_valido = result_df.dropna(subset=['previsto_filial', frealizado_col]).copy()
-    df_valido.loc[:, 'previsto_filial'] = df_valido['previsto_filial'].astype(str)
-    df_valido.loc[:, frealizado_col] = df_valido[frealizado_col].astype(str)
-    
-    matriz_pivot = pd.pivot_table(
-        df_valido,
-        values=realizado_col,
-        index='previsto_filial',
-        columns=frealizado_col,
-        aggfunc='sum',
-        fill_value=0
-    )
-    
-    matriz_pivot['Total Orçado'] = matriz_pivot.sum(axis=1)
-    matriz_pivot.loc['Total Realizado'] = matriz_pivot.sum(axis=0)
-    
-    return matriz_pivot, df_valido, previsto_col, frealizado_col, realizado_col
-
-def load_colaboradores_file(file):
-    try:
-        if file.name.endswith('.csv'):
-            df = pd.read_csv(file)
-        else:
-            df = pd.read_excel(file)
-        
-        df.columns = [col.upper() for col in df.columns]
-        
-        if 'CPF' in df.columns and 'NOME' in df.columns:
-            # Proper way to handle CPF conversion to avoid dtype warning
-            df['CPF'] = df['CPF'].astype(str)
-            df['CPF'] = df['CPF'].str.replace('[^0-9]', '', regex=True).str.zfill(11)
-            
-            st.sidebar.success(f"Arquivo de colaboradores carregado com sucesso: {len(df)} registros.")
-            return df
-        else:
-            required_cols = ['CPF', 'NOME']
-            missing = [col for col in required_cols if col not in df.columns]
-            st.sidebar.error(f"Colunas obrigatórias ausentes no arquivo de colaboradores: {', '.join(missing)}")
-            return None
-    except Exception as e:
-        st.sidebar.error(f"Erro ao carregar arquivo de colaboradores: {str(e)}")
-        return None
-
-# Removed redundant render_sidebar function as we're using render_shared_sidebar from shared_components
 
 def render_benefit_summary(result_df):
     st.subheader("Resumo dos Benefícios")
@@ -446,7 +229,6 @@ def display_error_log(error_log):
     3. **Verificar o formato do arquivo** - O arquivo deve estar no formato Excel (.xlsx)
     """)
 
-
 def process_data(beneficios_file, recorrentes_file, selected_month, month_mapping, ednaldo_mode, progress_callback):
     try:
         result = process_report(
@@ -616,61 +398,64 @@ def render_analysis_tab(result_df):
 def categorize_employees_by_branch(result_df, selected_filial):
     """
     Categorize employees as terminated, new hires, or transferred for a specific branch.
-    
-    Args:
-        result_df (DataFrame): The processed dataframe with employee data
-        selected_filial (str): The selected branch to analyze
-    
-    Returns:
-        tuple: Three dataframes for terminated, new hires, and transferred employees
+    Now, 'transferred' includes all transfers:
+    - Orçado em outra filial ≠ selecionada e realizado na filial selecionada (valor orçado = 0, valor realizado > 0, mostrar filial orçada)
+    - Orçado na filial selecionada e realizado em outra filial ≠ selecionada (valor orçado > 0, valor realizado = 0, mostrar filial realizada)
     """
-    # Create a copy to avoid warnings
     df = result_df.copy()
-    
-    # Make sure we're working with strings for branch fields
     for col in ['previsto_filial', 'filial_realizada_va', 'filial_realizada_unimed', 
                'filial_realizada_clin', 'filial_realizada_sv']:
         if col in df.columns:
             df.loc[:, col] = df[col].astype(str).fillna('00')
-    
-    # Define benefit columns for analysis
+
     benefit_cols = [
         ('Vale Alimentação', 'previsto_va', 'realizado_va', 'filial_realizada_va'),
         ('Assistência Médica', 'previsto_unimed', 'realizado_unimed', 'filial_realizada_unimed'),
         ('Assistência Odontológica', 'previsto_clin', 'realizado_clin', 'filial_realizada_clin'),
         ('Seguro de Vida', 'previsto_sv', 'realizado_sv', 'filial_realizada_sv')
     ]
-    
-    # Initialize dictionaries to store results
+
     terminated = {}
     new_hires = {}
     transferred = {}
-    
-    # Process each benefit type
+
     for benefit_name, prev_col, real_col, real_filial_col in benefit_cols:
         if real_filial_col not in df.columns:
             continue
-            
-        # Terminated employees: budgeted in selected branch but not actually allocated (filial realizada = 00)
+        # Desligados
         term_df = df[(df['previsto_filial'] == selected_filial) & 
                       (df[real_filial_col] == '00') & 
                       (df[prev_col] > 0)]
-        
-        # New hires: not budgeted (filial orçada = 00) but allocated to selected branch
+        # Contratados
         new_df = df[(df['previsto_filial'] == '00') & 
                      (df[real_filial_col] == selected_filial) & 
                      (df[real_col] > 0)]
-        
-        # Transferred: budgeted in selected branch but allocated to a different branch (not 00)
-        trans_df = df[(df['previsto_filial'] == selected_filial) & 
-                       (df[real_filial_col] != '00') & 
-                       (df[real_filial_col] != selected_filial) & 
+        # Transferidos:
+        # Caso 1: Orçado em outra filial, realizado na selecionada
+        trans_in = df[(df['previsto_filial'] != selected_filial) &
+                      (df[real_filial_col] == selected_filial) &
+                      (df['previsto_filial'] != '00') &
+                      (df[real_col] > 0)]
+        if not trans_in.empty:
+            trans_in = trans_in.copy()
+            trans_in[prev_col] = 0  # Valor orçado = 0
+            trans_in['filial_orcada'] = trans_in['previsto_filial']
+            trans_in['filial_transferida'] = selected_filial
+        # Caso 2: Orçado na selecionada, realizado em outra filial
+        trans_out = df[(df['previsto_filial'] == selected_filial) &
+                       (df[real_filial_col] != selected_filial) &
+                       (df[real_filial_col] != '00') &
                        (df[prev_col] > 0)]
-        
+        if not trans_out.empty:
+            trans_out = trans_out.copy()
+            trans_out[real_col] = 0  # Valor realizado = 0
+            trans_out['filial_orcada'] = selected_filial
+            trans_out['filial_transferida'] = trans_out[real_filial_col]
+        # Junta ambos os casos
+        trans_df = pd.concat([trans_in, trans_out], ignore_index=True)
+        transferred[benefit_name] = trans_df
         terminated[benefit_name] = term_df
         new_hires[benefit_name] = new_df
-        transferred[benefit_name] = trans_df
-    
     return terminated, new_hires, transferred
 
 def render_employee_table(df, prev_col, real_col, dest_filial_col=None):
@@ -739,7 +524,6 @@ def render_employee_table(df, prev_col, real_col, dest_filial_col=None):
     with col2:
         st.metric("Total Realizado", format_currency(total_realizado))
 
-# New function to display employee categories - replaces redundant code
 def render_employee_category(category_data, benefit_map, category_title, category_description):
     """
     Renders a set of tabs for a specific employee category with data for each benefit type.
@@ -827,6 +611,7 @@ def render_summary_tab(result_df):
 def display_comparison_results(result_df, result_bi):
     # This is a wrapper around the utility function
     display_comparison_panel(result_df, result_bi)
+
 
 def main():
     # Initialize session state variables
@@ -968,7 +753,15 @@ def main():
                 
                 st.subheader("Prévia do relatório")
                 st.dataframe(result_df, use_container_width=True, hide_index=True)
-            
+                relatorio = f"# Relatório de Benefícios\n\n{result_df.to_markdown(index=False)}"
+
+                st.download_button(
+                    label="📥 Baixar Relatório Markdown",
+                    data=relatorio.encode("utf-8"),
+                    file_name=f"relatorio_beneficios_{datetime.now().strftime('%Y%m%d')}.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
             with tab2:
                 st.subheader("Análise por Filial")
                 render_analysis_tab(result_df)
