@@ -4,7 +4,6 @@ from datetime import datetime
 import io
 import time
 from streamlit.errors import NoSessionContext
-import tabulate
 from main import process_report, process_report2
 
 from posprocessing import (calculate_totals, process_matriz_transferencia, 
@@ -753,15 +752,15 @@ def main():
                 
                 st.subheader("Prévia do relatório")
                 st.dataframe(result_df, use_container_width=True, hide_index=True)
-                relatorio = f"# Relatório de Benefícios\n\n{result_df.to_markdown(index=False)}"
+                # relatorio = f"# Relatório de Benefícios\n\n{result_df.to_markdown(index=False)}"
 
-                st.download_button(
-                    label="📥 Baixar Relatório Markdown",
-                    data=relatorio.encode("utf-8"),
-                    file_name=f"relatorio_beneficios_{datetime.now().strftime('%Y%m%d')}.md",
-                    mime="text/markdown",
-                    use_container_width=True
-                )
+                #st.download_button(
+                #    label="📥 Baixar Relatório Markdown",
+                #    data=relatorio.encode("utf-8"),
+                #    file_name=f"relatorio_beneficios_{datetime.now().strftime('%Y%m%d')}.md",
+                #    mime="text/markdown",
+                #    use_container_width=True
+                #)
             with tab2:
                 st.subheader("Análise por Filial")
                 render_analysis_tab(result_df)
