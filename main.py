@@ -109,7 +109,7 @@ def load_excel(caminho_entrada: str, Ednaldo: bool = None):
     
     colunas_obrigatorias = {
         "UNIMED": ["CPFTITULAR", "CPFBENEFICIARIO", "CCFORMATADO", "FILIAL", "VALOR", "406"],
-        "CLIN": ["CPFTITULAR", "CCFORMATADO", "FILIAL", "CPFBENEFICIARIO", "VALOR", "442"],
+        "CLIN": ["CPFTITULAR", "CCFORMATADO", "FILIAL", "CPFBENEFICIARIO", "VALOR", "441", '442'],
         "VA": ["CPFTITULAR", "FILIAL", "CCFORMATADO", "VALOR", "424"],
         "SV": ["CCFORMATADO", "CPFTITULAR", "FILIAL", "VALOR"],
         "SV2": ["CPFTITULAR", "CCFORMATADO", "VALOR", "FILIAL"]

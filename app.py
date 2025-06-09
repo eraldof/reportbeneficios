@@ -4,6 +4,8 @@ from datetime import datetime
 import io
 import time
 from streamlit.errors import NoSessionContext
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 from main import process_report, process_report2
 
 from posprocessing import (calculate_totals, process_matriz_transferencia, 
@@ -271,128 +273,6 @@ def process_data(beneficios_file, recorrentes_file, selected_month, month_mappin
     
     except Exception as e:
         raise e
-
-def render_analysis_tab(result_df):
-    detail_tab1, detail_tab2 = st.tabs([
-        "Comparativo Orçado vs Realizado", 
-        "Transferências Entre Filiais"
-    ])
-    
-    with detail_tab1:
-        st.write("Comparativo de valores orçados vs realizados por filial:")
-        
-        # Add dropdown for benefit selection
-        selected_benefit = st.selectbox(
-            "Selecione o benefício para filtrar o comparativo:",
-            ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
-            key="comparativo_benefit_filter"
-        )
-        
-        # Use result_bi from session state if available
-        result_bi = st.session_state.get('result_bi')
-        comparativo_df = process_filial_comparativo(result_df, result_bi, selected_benefit)
-        
-        format_dict = {
-            'Orçado': format_currency, 
-            'Realizado': format_currency, 
-            'Diferença': format_currency,
-            'Variação (%)': '{:.2f}%'.format,
-            'Qtd. Orçado': '{:d}'.format,
-            'Qtd. Realizado': '{:d}'.format
-        }
-        
-        highlight_map = {
-            'Diferença': highlight_diff,
-            'Variação (%)': highlight_percent
-        }
-        
-        styled_comparativo = create_styled_dataframe(comparativo_df, format_dict, highlight_map)
-        
-        # Configure columns for the data_editor with currency formatting
-        column_config = {
-            "Orçado": st.column_config.NumberColumn(
-                "Orçado",
-                format="R$ %.2f"
-            ),
-            "Realizado": st.column_config.NumberColumn(
-                "Realizado",
-                format="R$ %.2f"
-            ),
-            "Diferença": st.column_config.NumberColumn(
-                "Diferença",
-                format="R$ %.2f"
-            ),
-            "Variação (%)": st.column_config.NumberColumn(
-                "Variação (%)",
-                format="%.2f%%"
-            ),
-            "Justificativa": st.column_config.TextColumn(
-                "Justificativa",
-                help="Adicione uma justificativa para variações significativas",
-                width="large"
-            )
-        }
-        
-        # Use data_editor with the column configuration
-        st.data_editor(
-            comparativo_df,
-            column_config=column_config,
-            use_container_width=True
-        )
-        
-    with detail_tab2:
-        st.write("Análise de transferências entre filiais (Orçado vs Realizado):")
-        
-        beneficio_matriz = st.selectbox(
-            "Selecione o benefício para análise da matriz de transferências:",
-            ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
-            key="matriz_transferencia"
-        )
-        
-        df_valido, previsto_col, frealizado_col, realizado_col = render_transfer_matrix(
-            result_df, beneficio_matriz
-        )
-        
-        st.markdown("---")
-        st.subheader("Detalhamento de CPFs Transferidos")
-        st.write("Visualize os CPFs que foram orçados em uma filial e realizados em outra:")
-        
-        beneficio_cpf = st.selectbox(
-            "Selecione o benefício para detalhamento de CPFs transferidos:",
-            ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
-            key="detalhe_cpf"
-        )
-        
-        _, df_valido, previsto_col, frealizado_col, realizado_col = process_matriz_transferencia(
-            result_df, beneficio_cpf
-        )
-        
-        filiais_orcamento = sorted(['não orçado' if filial == '00' else filial for filial in df_valido['previsto_filial'].unique()])
-        filiais_realizacao = sorted(['não realizado' if filial == '00' else filial for filial in df_valido['previsto_filial'].unique()])
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            filial_origem = st.selectbox(
-                "Filial onde foi orçado:",
-                options=filiais_orcamento,
-                key=f"origem_{beneficio_cpf}"
-            )
-            if filial_origem == 'não orçado':
-                filial_origem = '00'
-        
-        with col2:
-            filial_destino = st.selectbox(
-                "Filial onde foi realizado:",
-                options=filiais_realizacao,
-                key=f"destino_{beneficio_cpf}"
-            )
-            if filial_destino == 'não orçado':
-                filial_destino = '00'
-        
-        render_cpf_detail(
-            df_valido, filial_origem, filial_destino, 
-            previsto_col, frealizado_col, realizado_col
-        )
 
 def categorize_employees_by_branch(result_df, selected_filial):
     """
@@ -745,7 +625,7 @@ def main():
             # Display the regular report
             st.header("Resultados")
             
-            tab1, tab2, tab3, tab4 = st.tabs(["Visão Geral", "Análise Detalhada", "Resumo relatório", "Comparação BI vs Relatório"])
+            tab1, tab2, tab3, tab4 = st.tabs(["Visão Geral", "Comparação Orçado vs Realizado BI", "Resumo relatório", "Comparação BI vs Relatório"])
             
             with tab1:
                 render_benefit_summary(result_df)
@@ -762,8 +642,66 @@ def main():
                 #    use_container_width=True
                 #)
             with tab2:
-                st.subheader("Análise por Filial")
-                render_analysis_tab(result_df)
+                st.write("Comparativo de valores orçados vs realizados por filial:")
+        
+                # Add dropdown for benefit selection
+                selected_benefit = st.selectbox(
+                    "Selecione o benefício para filtrar o comparativo:",
+                    ["Vale Alimentação", "Assistência Médica", "Assistência Odontológica", "Seguro de Vida"],
+                    key="comparativo_benefit_filter"
+                )
+                
+                # Use result_bi from session state if available
+                result_bi = st.session_state.get('result_bi')
+                comparativo_df = process_filial_comparativo(result_df, result_bi, selected_benefit)
+                
+                format_dict = {
+                    'Orçado': format_currency, 
+                    'Realizado': format_currency, 
+                    'Diferença': format_currency,
+                    'Variação (%)': '{:.2f}%'.format,
+                    'Qtd. Orçado': '{:d}'.format,
+                    'Qtd. Realizado': '{:d}'.format
+                }
+                
+                highlight_map = {
+                    'Diferença': highlight_diff,
+                    'Variação (%)': highlight_percent
+                }
+                
+                styled_comparativo = create_styled_dataframe(comparativo_df, format_dict, highlight_map)
+                
+                # Configure columns for the data_editor with currency formatting
+                column_config = {
+                    "Orçado": st.column_config.NumberColumn(
+                        "Orçado",
+                        format="R$ %.2f"
+                    ),
+                    "Realizado": st.column_config.NumberColumn(
+                        "Realizado",
+                        format="R$ %.2f"
+                    ),
+                    "Diferença": st.column_config.NumberColumn(
+                        "Diferença",
+                        format="R$ %.2f"
+                    ),
+                    "Variação (%)": st.column_config.NumberColumn(
+                        "Variação (%)",
+                        format="%.2f%%"
+                    ),
+                    "Justificativa": st.column_config.TextColumn(
+                        "Justificativa",
+                        help="Adicione uma justificativa para variações significativas",
+                        width="large"
+                    )
+                }
+                
+                # Use data_editor with the column configuration
+                st.data_editor(
+                    comparativo_df,
+                    column_config=column_config,
+                    use_container_width=True
+                )
                 
             with tab3:
                 st.subheader("Resumo por Filial")
