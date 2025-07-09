@@ -29,7 +29,7 @@ try:
 
     **Planilha CLIN:**
     - `CPFTITULAR` (deve existir para validação do CPF, mesmo que os dados principais venham de outra coluna)  
-    - `CPFDOBENEFICIARIO` (contém o CPF do colaborador, principal para essa planilha)  
+    - `CPFDOBENEFICIARIO` (contém o CPF do colaborador principal, para essa planilha ela seria a "chave" que relaciona com as demais)  
     - `VALOR` (valor calculado)  
     - `FILIAL` (filial)
 
@@ -45,7 +45,7 @@ try:
 
     ---
 
-    ##### **Modo Padrão**
+    ##### **Modo Dimitri**
 
     **Planilha UNIMED:**
     - `CPFDOBENEFICIARIO` (identifica o beneficiário)  
