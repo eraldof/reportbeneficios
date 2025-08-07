@@ -33,11 +33,11 @@ def carregar_excel(caminho_arquivo, modo_ednaldo=False):
         tipos_planilhas.append("SV2")
     
     colunas_necessarias = {
-        "UNIMED": ["CPFTITULAR", "CPFBENEFICIARIO", "NOMEBENEFICIARIO", "CCFORMATADO", "FILIAL", "VALOR", "406"],
-        "CLIN": ["CPFTITULAR", "CCFORMATADO", "NOMEBENEFICIARIO", "FILIAL", "CPFBENEFICIARIO", "VALOR", "441", '442'],
-        "VA": ["CPFTITULAR", "FILIAL", "CCFORMATADO", "NOMEBENEFICIARIO", "VALOR", "424"],
-        "SV": ["CCFORMATADO", "CPFTITULAR", "NOMEBENEFICIARIO", "FILIAL", "VALOR"],
-        "SV2": ["CPFTITULAR", "CCFORMATADO", "NOMEBENEFICIARIO", "VALOR", "FILIAL"]
+        "UNIMED": ["CPFTITULAR", "CPFBENEFICIARIO", "NOMETITULAR", "CCFORMATADO", "FILIAL", "VALOR", "406"],
+        "CLIN": ["CPFTITULAR", "CCFORMATADO", "NOMETITULAR", "FILIAL", "CPFBENEFICIARIO", "VALOR", "441", '442'],
+        "VA": ["CPFTITULAR", "FILIAL", "CCFORMATADO", "NOMETITULAR", "VALOR", "424"],
+        "SV": ["CCFORMATADO", "CPFTITULAR", "NOMETITULAR", "FILIAL", "VALOR"],
+        "SV2": ["CPFTITULAR", "CCFORMATADO", "NOMETITULAR", "VALOR", "FILIAL"]
     }
 
     log_carregamento = {}
@@ -124,10 +124,10 @@ def extrair_nomes_por_cpf(dados_planilhas):
     nomes_por_cpf = {}
     
     for df in dados_planilhas.values():
-        if 'CPFTITULAR' in df.columns and 'NOMEBENEFICIARIO' in df.columns:
+        if 'CPFTITULAR' in df.columns and 'NOMETITULAR' in df.columns:
             for idx, row in df.iterrows():
                 cpf_titular = limpar_texto(str(row['CPFTITULAR'])) if pd.notna(row['CPFTITULAR']) else None
-                nome_beneficiario = str(row['NOMEBENEFICIARIO']).strip() if pd.notna(row['NOMEBENEFICIARIO']) else None
+                nome_beneficiario = str(row['NOMETITULAR']).strip() if pd.notna(row['NOMETITULAR']) else None
                 
                 if cpf_titular and nome_beneficiario and len(cpf_titular) >= 11:
                     # Se já existe um nome para este CPF, mantém o primeiro encontrado
@@ -249,7 +249,7 @@ def juntar_recorrentes(tabela_mestre, recorrentes):
     resultado = pd.merge(tabela_mestre, recorrentes, on='CPF', how='outer')
 
     colunas_ordenadas = [
-        'CPF', 'NOMEBENEFICIARIO', 'previsto_filial', 
+        'CPF', 'NOMETITULAR', 'previsto_filial', 
         'previsto_va', 'CC_realizado_va', 'filial_realizada_va', 'realizado_va',
         'previsto_unimed', 'filial_realizada_unimed', 'CC_realizado_unimed', 'realizado_unimed',
         'previsto_clin', 'filial_realizada_clin', 'CC_realizado_clin', 'realizado_clin',
@@ -306,13 +306,13 @@ def gerar_relatorio(caminho_beneficios: str, caminho_orcamento: str, modo_ednald
         tabela_final = juntar_tabelas(cpfs, unimed, va, clin, sv, sv2, modo_ednaldo)
         
         # Adicionar os nomes dos beneficiários na tabela final
-        tabela_final['NOMEBENEFICIARIO'] = tabela_final['CPF'].map(nomes_por_cpf)
+        tabela_final['NOMETITULAR'] = tabela_final['CPF'].map(nomes_por_cpf)
         
         tabela_final = juntar_recorrentes(tabela_final, recorrentes)
         
         tabela_final[['CC_realizado_va', 'CC_realizado_unimed', 'CC_realizado_sv', 'CC_realizado_clin']] = tabela_final[['CC_realizado_va', 'CC_realizado_unimed', 'CC_realizado_sv', 'CC_realizado_clin']].fillna('00000000')
         tabela_final[['filial_realizada_va', 'filial_realizada_unimed', 'filial_realizada_sv', 'filial_realizada_clin']] = tabela_final[['filial_realizada_va', 'filial_realizada_unimed', 'filial_realizada_sv', 'filial_realizada_clin']].fillna('00')
-        tabela_final['NOMEBENEFICIARIO'] = tabela_final['NOMEBENEFICIARIO'].fillna('')
+        tabela_final['NOMETITULAR'] = tabela_final['NOMETITULAR'].fillna('')
         tabela_final = tabela_final.fillna(0)
         atualizar_progresso(100, "Relatório finalizado")
         return tabela_final
@@ -347,7 +347,7 @@ def gerar_comparacao_bi(caminho_beneficios: str, caminho_bi: str, modo_ednaldo=F
         tabela_final = juntar_tabelas(cpfs, unimed, va, clin, sv, sv2, modo_ednaldo)
         
         # Adicionar os nomes dos beneficiários na tabela final
-        tabela_final['NOMEBENEFICIARIO'] = tabela_final['CPF'].map(nomes_por_cpf)
+        tabela_final['NOMETITULAR'] = tabela_final['CPF'].map(nomes_por_cpf)
         
         atualizar_progresso(100, "Dados consolidados")
 
@@ -487,4 +487,5 @@ def consolidar_orcado_realizado(df_orcado: pd.DataFrame,
         [f'{c}_orcado' for c in core_cols] +
         [f'{c}_realizado' for c in core_cols]
     )
+
     return df_merge[cols_ordenadas]
