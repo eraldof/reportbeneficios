@@ -377,8 +377,8 @@ def exibir_tabela_colaboradores(df, col_previsto, col_realizado, col_filial_dest
         return
 
     colunas_exibicao = [coluna_cpf]
-    if 'NOMEBENEFICIARIO' in df.columns:
-        colunas_exibicao.append('NOMEBENEFICIARIO')
+    if 'NOMETITULAR' in df.columns:
+        colunas_exibicao.append('NOMETITULAR')
     colunas_exibicao.extend([col_previsto, col_realizado])
     if col_filial_destino:
         colunas_exibicao.append(col_filial_destino)
@@ -389,8 +389,8 @@ def exibir_tabela_colaboradores(df, col_previsto, col_realizado, col_filial_dest
         col_previsto: 'Valor Orçado',
         col_realizado: 'Valor Realizado'
     }
-    if 'NOMEBENEFICIARIO' in df_exibicao.columns:
-        renomear['NOMEBENEFICIARIO'] = 'Nome Colaborador'
+    if 'NOMETITULAR' in df_exibicao.columns:
+        renomear['NOMETITULAR'] = 'Nome Colaborador'
     if col_filial_destino:
         renomear[col_filial_destino] = 'Filial Realizada'
 
@@ -804,4 +804,5 @@ def exibir_analise_folha_pagamento(data_folha):
         exibir_tabela_folha(transferidos, "transferidos")
 
 # Exemplo de uso:
+
 # exibir_analise_folha_pagamento(data_folha)
