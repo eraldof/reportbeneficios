@@ -177,16 +177,16 @@ else:
         ## 🔎 Guia de Colunas Necessárias
         > 🚀 **Nova funcionalidade:**  
         > Não é mais necessário enviar um arquivo separado com o nome dos colaboradores.  
-        > **Agora, é obrigatório que a coluna** `NOMEBENEFICIARIO` **esteja presente em todas as abas listadas abaixo.**
+        > **Agora, é obrigatório que a coluna** `NOMETITULAR` **esteja presente em todas as abas listadas abaixo.**
         
 
         | **Aba (CHAVE)** | **Colunas Obrigatórias**                                                                                                                                     |
         |-----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
-        | **UNIMED**      | `CPFTITULAR`, `CPFBENEFICIARIO`, `NOMEBENEFICIARIO`, `CCFORMATADO`, `FILIAL`, `VALOR`, `406`                                                               |
-        | **CLIN**        | `CPFTITULAR`, `CCFORMATADO`, `NOMEBENEFICIARIO`, `FILIAL`, `CPFBENEFICIARIO`, `VALOR`, `441`, `442`                                                         |
-        | **VA**          | `CPFTITULAR`, `FILIAL`, `CCFORMATADO`, `NOMEBENEFICIARIO`, `VALOR`, `424`                                                                                   |
-        | **SV**          | `CCFORMATADO`, `CPFTITULAR`, `NOMEBENEFICIARIO`, `FILIAL`, `VALOR`                                                                                           |
-        | **SV2**         | `CPFTITULAR`, `CCFORMATADO`, `NOMEBENEFICIARIO`, `VALOR`, `FILIAL`  
+        | **UNIMED**      | `CPFTITULAR`, `CPFBENEFICIARIO`, `NOMETITULAR`, `CCFORMATADO`, `FILIAL`, `VALOR`, `406`                                                               |
+        | **CLIN**        | `CPFTITULAR`, `CCFORMATADO`, `NOMETITULAR`, `FILIAL`, `CPFBENEFICIARIO`, `VALOR`, `441`, `442`                                                         |
+        | **VA**          | `CPFTITULAR`, `FILIAL`, `CCFORMATADO`, `NOMETITULAR`, `VALOR`, `424`                                                                                   |
+        | **SV**          | `CCFORMATADO`, `CPFTITULAR`, `NOMETITULAR`, `FILIAL`, `VALOR`                                                                                           |
+        | **SV2**         | `CPFTITULAR`, `CCFORMATADO`, `NOMETITULAR`, `VALOR`, `FILIAL`  
         
         *(SV2 obrigatório apenas quando **modo EDNALDO = DESMARCADO**)*
 
@@ -200,5 +200,6 @@ else:
 
         """
     
+
 
     st.markdown(text)
